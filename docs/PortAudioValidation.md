@@ -1,5 +1,8 @@
 # PortAudio validation — 2026-11-12
 
+Subsequent compatibility checks against the completed CyDSP optimization commit,
+including its independent tests, are recorded in [CyDSP update](CyDSPUpdate.md).
+
 Windows x64, MSVC 19.40 / Visual Studio 2022, Windows SDK 10.0.26100.0.
 CyDSP was read from `../CyDSP` and built into this repository's build
 directories. No source in CyDSP, CyDAW_Project, CyUI or CyCode was edited.

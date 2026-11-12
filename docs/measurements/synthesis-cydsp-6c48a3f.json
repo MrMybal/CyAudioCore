@@ -1,0 +1,646 @@
+{
+  "trials": 6,
+  "alternatingExecutableOrder": true,
+  "matchingChecksums": true,
+  "checksumMeaning": "final sample of the last left-channel block; not a full-output hash",
+  "beforeExeSha256": "ec4587a2940f58a0682ea8bac0b206a0e3714f809035af6d5fcc9ccfaaa566e0",
+  "afterExeSha256": "d4b5dd60b9fc903340650c5d6269b6434069d7d41308680dcfd060fd88c4f6b5",
+  "timingMeaning": "median of trial medians of 31 batch means; 16 public calls per batch; not individual callback percentiles",
+  "rows": [
+    {
+      "source": "oscillator",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 32,
+      "beforeMedianBatchMeanNs": 3900.0,
+      "afterMedianBatchMeanNs": 4031.25,
+      "speedup": 0.9674418604651163,
+      "beforeTrialsNs": [
+        3918.75,
+        3881.25,
+        3862.5,
+        3818.75,
+        5850.0,
+        5081.25
+      ],
+      "afterTrialsNs": [
+        4031.25,
+        4056.25,
+        5643.75,
+        3962.5,
+        4031.25,
+        3975.0
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 128,
+      "beforeMedianBatchMeanNs": 12634.375,
+      "afterMedianBatchMeanNs": 13125.0,
+      "speedup": 0.9626190476190476,
+      "beforeTrialsNs": [
+        12606.25,
+        12468.75,
+        12662.5,
+        12512.5,
+        13556.25,
+        19968.75
+      ],
+      "afterTrialsNs": [
+        13268.75,
+        13343.75,
+        12800.0,
+        13037.5,
+        12825.0,
+        13212.5
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 512,
+      "beforeMedianBatchMeanNs": 46800.0,
+      "afterMedianBatchMeanNs": 52484.375,
+      "speedup": 0.891693956534683,
+      "beforeTrialsNs": [
+        46756.25,
+        46725.0,
+        46818.75,
+        46781.25,
+        72931.25,
+        61443.75
+      ],
+      "afterTrialsNs": [
+        63787.5,
+        78318.75,
+        48318.75,
+        48843.75,
+        47775.0,
+        56125.0
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 32,
+      "beforeMedianBatchMeanNs": 17034.375,
+      "afterMedianBatchMeanNs": 17318.75,
+      "speedup": 0.9835799350415012,
+      "beforeTrialsNs": [
+        24850.0,
+        16825.0,
+        16768.75,
+        16668.75,
+        17243.75,
+        24206.25
+      ],
+      "afterTrialsNs": [
+        17587.5,
+        17281.25,
+        17112.5,
+        17118.75,
+        17356.25,
+        17525.0
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 128,
+      "beforeMedianBatchMeanNs": 54618.75,
+      "afterMedianBatchMeanNs": 56515.625,
+      "speedup": 0.9664362731545479,
+      "beforeTrialsNs": [
+        54143.75,
+        54656.25,
+        54581.25,
+        54125.0,
+        74831.25,
+        65368.75
+      ],
+      "afterTrialsNs": [
+        61918.75,
+        79737.5,
+        56706.25,
+        56325.0,
+        56256.25,
+        56056.25
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 512,
+      "beforeMedianBatchMeanNs": 266331.25,
+      "afterMedianBatchMeanNs": 222600.0,
+      "speedup": 1.1964566486972148,
+      "beforeTrialsNs": [
+        201143.75,
+        285850.0,
+        201256.25,
+        252337.5,
+        284600.0,
+        280325.0
+      ],
+      "afterTrialsNs": [
+        208593.75,
+        302375.0,
+        208693.75,
+        252312.5,
+        206150.0,
+        236506.25
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 32,
+      "beforeMedianBatchMeanNs": 4425.0,
+      "afterMedianBatchMeanNs": 3968.75,
+      "speedup": 1.1149606299212598,
+      "beforeTrialsNs": [
+        4450.0,
+        3937.5,
+        4768.75,
+        5950.0,
+        4400.0,
+        3787.5
+      ],
+      "afterTrialsNs": [
+        4181.25,
+        3943.75,
+        3868.75,
+        3868.75,
+        3993.75,
+        4056.25
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 128,
+      "beforeMedianBatchMeanNs": 15653.125,
+      "afterMedianBatchMeanNs": 13093.75,
+      "speedup": 1.1954653937947495,
+      "beforeTrialsNs": [
+        13087.5,
+        18425.0,
+        14681.25,
+        16625.0,
+        16868.75,
+        12493.75
+      ],
+      "afterTrialsNs": [
+        13293.75,
+        12893.75,
+        13306.25,
+        12843.75,
+        12837.5,
+        20650.0
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 512,
+      "beforeMedianBatchMeanNs": 53196.875,
+      "afterMedianBatchMeanNs": 50756.25,
+      "speedup": 1.0480852111808892,
+      "beforeTrialsNs": [
+        70400.0,
+        57993.75,
+        48400.0,
+        66118.75,
+        46443.75,
+        46456.25
+      ],
+      "afterTrialsNs": [
+        55606.25,
+        48231.25,
+        50831.25,
+        48056.25,
+        50681.25,
+        69512.5
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 32,
+      "beforeMedianBatchMeanNs": 20940.625,
+      "afterMedianBatchMeanNs": 17481.25,
+      "speedup": 1.1978905970682874,
+      "beforeTrialsNs": [
+        17125.0,
+        22025.0,
+        20793.75,
+        22893.75,
+        21087.5,
+        16425.0
+      ],
+      "afterTrialsNs": [
+        17725.0,
+        18575.0,
+        17237.5,
+        16843.75,
+        16906.25,
+        25100.0
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 128,
+      "beforeMedianBatchMeanNs": 62771.875,
+      "afterMedianBatchMeanNs": 56868.75,
+      "speedup": 1.103802615672052,
+      "beforeTrialsNs": [
+        72381.25,
+        77062.5,
+        56068.75,
+        69475.0,
+        53775.0,
+        53831.25
+      ],
+      "afterTrialsNs": [
+        55768.75,
+        55456.25,
+        59425.0,
+        55075.0,
+        57968.75,
+        79837.5
+      ]
+    },
+    {
+      "source": "oscillator",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 512,
+      "beforeMedianBatchMeanNs": 210684.375,
+      "afterMedianBatchMeanNs": 220765.625,
+      "speedup": 0.9543350555594876,
+      "beforeTrialsNs": [
+        242668.75,
+        290850.0,
+        222906.25,
+        198462.5,
+        197806.25,
+        197868.75
+      ],
+      "afterTrialsNs": [
+        239331.25,
+        203956.25,
+        236700.0,
+        203368.75,
+        204831.25,
+        293981.25
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 32,
+      "beforeMedianBatchMeanNs": 20034.375,
+      "afterMedianBatchMeanNs": 5462.5,
+      "speedup": 3.667620137299771,
+      "beforeTrialsNs": [
+        12218.75,
+        19975.0,
+        20093.75,
+        20131.25,
+        20243.75,
+        12243.75
+      ],
+      "afterTrialsNs": [
+        5493.75,
+        9056.25,
+        5225.0,
+        6518.75,
+        5225.0,
+        5431.25
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 128,
+      "beforeMedianBatchMeanNs": 46509.375,
+      "afterMedianBatchMeanNs": 18831.25,
+      "speedup": 2.4697975439761035,
+      "beforeTrialsNs": [
+        45737.5,
+        45868.75,
+        46568.75,
+        65212.5,
+        51187.5,
+        46450.0
+      ],
+      "afterTrialsNs": [
+        18181.25,
+        30131.25,
+        18000.0,
+        24006.25,
+        18062.5,
+        19481.25
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 512,
+      "beforeMedianBatchMeanNs": 218865.625,
+      "afterMedianBatchMeanNs": 71859.375,
+      "speedup": 3.045749075886062,
+      "beforeTrialsNs": [
+        182087.5,
+        274275.0,
+        244231.25,
+        194125.0,
+        218818.75,
+        218912.5
+      ],
+      "afterTrialsNs": [
+        67525.0,
+        86862.5,
+        67743.75,
+        78618.75,
+        67243.75,
+        75975.0
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 32,
+      "beforeMedianBatchMeanNs": 48775.0,
+      "afterMedianBatchMeanNs": 21950.0,
+      "speedup": 2.222095671981777,
+      "beforeTrialsNs": [
+        48731.25,
+        48525.0,
+        48656.25,
+        78456.25,
+        79818.75,
+        48818.75
+      ],
+      "afterTrialsNs": [
+        21425.0,
+        36056.25,
+        21862.5,
+        22037.5,
+        21631.25,
+        22443.75
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 128,
+      "beforeMedianBatchMeanNs": 189421.875,
+      "afterMedianBatchMeanNs": 77018.75,
+      "speedup": 2.4594254645784304,
+      "beforeTrialsNs": [
+        184912.5,
+        185137.5,
+        190850.0,
+        254000.0,
+        187993.75,
+        241525.0
+      ],
+      "afterTrialsNs": [
+        73162.5,
+        116431.25,
+        77093.75,
+        82550.0,
+        71743.75,
+        76943.75
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "double",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 512,
+      "beforeMedianBatchMeanNs": 922156.25,
+      "afterMedianBatchMeanNs": 311543.75,
+      "speedup": 2.959957469857765,
+      "beforeTrialsNs": [
+        748312.5,
+        930812.5,
+        940568.75,
+        913500.0,
+        954506.25,
+        884525.0
+      ],
+      "afterTrialsNs": [
+        275400.0,
+        355643.75,
+        281343.75,
+        341743.75,
+        342625.0,
+        275012.5
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 32,
+      "beforeMedianBatchMeanNs": 12500.0,
+      "afterMedianBatchMeanNs": 6021.875,
+      "speedup": 2.075765438505449,
+      "beforeTrialsNs": [
+        12156.25,
+        21100.0,
+        12843.75,
+        12081.25,
+        15381.25,
+        12087.5
+      ],
+      "afterTrialsNs": [
+        7075.0,
+        5450.0,
+        6593.75,
+        8725.0,
+        5293.75,
+        5418.75
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 128,
+      "beforeMedianBatchMeanNs": 47318.75,
+      "afterMedianBatchMeanNs": 18787.5,
+      "speedup": 2.518629407850965,
+      "beforeTrialsNs": [
+        46637.5,
+        79675.0,
+        48162.5,
+        46025.0,
+        48000.0,
+        46031.25
+      ],
+      "afterTrialsNs": [
+        29968.75,
+        17993.75,
+        24500.0,
+        19306.25,
+        18031.25,
+        18268.75
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 16,
+      "frames": 512,
+      "beforeMedianBatchMeanNs": 182696.875,
+      "afterMedianBatchMeanNs": 75115.625,
+      "speedup": 2.43220867828764,
+      "beforeTrialsNs": [
+        228881.25,
+        195312.5,
+        182743.75,
+        181143.75,
+        181750.0,
+        182650.0
+      ],
+      "afterTrialsNs": [
+        84131.25,
+        69181.25,
+        74306.25,
+        114906.25,
+        68487.5,
+        75925.0
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 32,
+      "beforeMedianBatchMeanNs": 49403.125,
+      "afterMedianBatchMeanNs": 25578.125,
+      "speedup": 1.931459987782529,
+      "beforeTrialsNs": [
+        48575.0,
+        79968.75,
+        51837.5,
+        48343.75,
+        50231.25,
+        48043.75
+      ],
+      "afterTrialsNs": [
+        31781.25,
+        21643.75,
+        29512.5,
+        35268.75,
+        21518.75,
+        21381.25
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 128,
+      "beforeMedianBatchMeanNs": 201037.5,
+      "afterMedianBatchMeanNs": 83431.25,
+      "speedup": 2.409618698029815,
+      "beforeTrialsNs": [
+        231618.75,
+        291806.25,
+        214950.0,
+        187125.0,
+        186093.75,
+        186143.75
+      ],
+      "afterTrialsNs": [
+        95975.0,
+        74143.75,
+        88043.75,
+        81850.0,
+        73656.25,
+        85012.5
+      ]
+    },
+    {
+      "source": "wavetable",
+      "sampleType": "float",
+      "backend": "avx2",
+      "voices": 64,
+      "frames": 512,
+      "beforeMedianBatchMeanNs": 737875.0,
+      "afterMedianBatchMeanNs": 296009.375,
+      "speedup": 2.4927419950803924,
+      "beforeTrialsNs": [
+        872743.75,
+        746556.25,
+        734100.0,
+        733856.25,
+        737218.75,
+        738531.25
+      ],
+      "afterTrialsNs": [
+        316606.25,
+        275412.5,
+        273756.25,
+        428187.5,
+        275331.25,
+        321612.5
+      ]
+    }
+  ],
+  "dependencyCommit": "6c48a3f8814c308e58e705707e7b9faf57b45777",
+  "coreBaselineCommit": "48fdb7941aff80b4e23ba8f1faaef033e3611753",
+  "measurementSourceSha256": "13f884315025a817008f0549e0c39ba68f767f88e4c322604a9e3304aa90d7d2",
+  "baselineSynthesizerSourceSha256": "3bda362ebeb715c7808848bac9fae4e05c24cce959f92c6cb82c918b15a6c5e0",
+  "updatedSynthesizerSourceSha256": "4ebec8a2499b09beca53b4d64694327dde44fc6bc93ec237d88bbd74117659e3",
+  "platform": "Windows x64",
+  "compiler": "MSVC 19.40 Release",
+  "sampleRate": 48000,
+  "channels": 2,
+  "physicalDevices": false,
+  "externalFrameworkComparison": false
+}

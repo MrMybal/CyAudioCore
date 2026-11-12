@@ -27,7 +27,7 @@ template <Sample T> struct Synthesizer<T>::State {
     struct Voice {
         SynthVoiceInfo info;
         Oscillator<T> oscillator;
-        double wavePhase = 0;
+        WavetableOscillator<T> wavetableOscillator;
         Adsr envelope;
         double position = 0, pitch = 0, perNoteBend = 0, baseNote = 60;
         std::array<double, 256> last{}, stolen{};
@@ -62,6 +62,8 @@ template <Sample T> struct Synthesizer<T>::State {
                              c.bend * c.range + c.tuningOffset) /
                             12);
         (void)v.oscillator.setFrequency(std::clamp(v.info.frequency, 0.0, spec.sampleRate / 2));
+        if (wavetable)
+            (void)v.wavetableOscillator.setFrequency(std::clamp(v.info.frequency, 0.0, spec.sampleRate / 2));
     }
     void stop(Voice& v) noexcept {
         if (v.info.active && renderer.stop)
@@ -112,7 +114,7 @@ template <Sample T> struct Synthesizer<T>::State {
         v.attributePitch = base >= 0;
         v.keyDown = true;
         v.position = 0;
-        v.wavePhase = 0;
+        v.wavetableOscillator.reset();
         v.pitch = pitch;
         v.perNoteBend = 0;
         v.baseNote = base >= 0 ? base : c.tuned[note] ? c.tuning[note] : note;
@@ -326,13 +328,11 @@ template <Sample T> struct Synthesizer<T>::State {
                     if (status != Status::ok)
                         return status;
                 } else if (!sample && wavetable) {
-                    const auto frequency = std::clamp(v.info.frequency, 0.0, spec.sampleRate * .5);
-                    for (std::size_t i = 0; i < count; ++i) {
-                        wave.channel(0)[i] =
-                            wavetable->value(v.wavePhase, frequency, spec.sampleRate);
-                        v.wavePhase += frequency / spec.sampleRate;
-                        v.wavePhase -= std::floor(v.wavePhase);
-                    }
+                    // MIDI/UMP events split render() at their exact offsets. CyDSP selects
+                    // the harmonic banks once for each resulting constant-frequency span.
+                    const auto status = v.wavetableOscillator.process(wave);
+                    if (status != Status::ok)
+                        return status;
                 } else if (!sample) {
                     const auto status = v.oscillator.process(wave);
                     if (status != Status::ok)
@@ -554,6 +554,13 @@ template <Sample T> Status Synthesizer<T>::setWavetable(const Wavetable<T>* tabl
         return Status::transition_in_progress;
     if (table && !table->size())
         return Status::invalid_argument;
+    if (table)
+        for (auto& voice : state_->voices) {
+            const auto status = voice.wavetableOscillator.prepare(
+                {state_->spec.sampleRate, state_->spec.maxBlockFrames, 1}, *table);
+            if (status != Status::ok)
+                return status;
+        }
     state_->wavetable = table;
     state_->sample = nullptr;
     state_->renderer = {};
@@ -605,6 +612,7 @@ template <Sample T> void Synthesizer<T>::reset() noexcept {
         for (auto& v : state_->voices) {
             state_->stop(v);
             v.oscillator.reset();
+            v.wavetableOscillator.reset();
             v.position = 0;
             v.last.fill(0);
             v.fade = 0;

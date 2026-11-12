@@ -5,6 +5,11 @@ publique pour les services audio. Ce découpage modifie les headers, namespaces 
 cibles ; recompiler les deux bibliothèques et les consommateurs avec le même ABI.
 Aucun fichier de CyDAW ou CyUI n'est modifié par cette extraction.
 
+La révision optimisée CyDSP `6c48a3f` reste compatible avec ces API et cibles.
+Le synthétiseur CyAudioCore utilise désormais son oscillateur wavetable public par
+blocs pour bénéficier de cette optimisation. Recompiler les archives liées ;
+voir [validation et adaptation](CyDSPUpdate.md) et [mesures](Measurements.md).
+
 | Avant | Après |
 | --- | --- |
 | CyDSP::CyDSP, CyDSP::Stretch | Inchangés pour les traitements numériques |
