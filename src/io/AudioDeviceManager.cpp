@@ -64,7 +64,8 @@ struct AudioDeviceManager::State {
             next.size() == devices.size() &&
             std::equal(next.begin(), next.end(), devices.begin(), [](const auto& a, const auto& b) {
                 return a.id == b.id && a.name == b.name && a.input == b.input &&
-                       a.isDefault == b.isDefault;
+                       a.isDefault == b.isDefault && a.provider == b.provider && a.backend == b.backend &&
+                       a.persistentId == b.persistentId && a.persistentIdentity == b.persistentIdentity;
             });
         devices.swap(next);
         if (!same)
@@ -115,7 +116,9 @@ struct AudioDeviceManager::State {
         retried = true;
         retriedAt = now;
         config.generation=generation.load()+1;
-        auto r = driver.open(driver.context, config, render, renderContext);
+        auto r = extended && driver.openWithContext ?
+            driver.openWithContext(driver.context,config,extended,extendedUser) :
+            driver.open(driver.context, config, render, renderContext);
         if (r != Status::ok) {
             failed(r);
             return r;
@@ -179,6 +182,9 @@ Status AudioDeviceManager::prepare(const AudioContextOptions& options,AudioManag
             return static_cast<State::Native*>(p)->device.takeNotifications();
         };
         d.description=[](void* p,AudioStreamDescription& out)noexcept{return static_cast<State::Native*>(p)->device.description(out);};
+        d.openWithContext=[](void* p,const AudioDeviceConfig& c,AudioDeviceContextCallback cb,void* user)noexcept {
+            auto& n=*static_cast<State::Native*>(p); return n.device.openWithContext(n.context,c,cb,user);
+        };
         d.capabilities=[](void* p,std::string_view id,bool input,AudioDeviceCapabilities& out)noexcept{return static_cast<State::Native*>(p)->context.capabilities(id,input,out);};
         next->callbacks = callbacks;
         state_.swap(next);

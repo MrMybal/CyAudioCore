@@ -9,9 +9,14 @@
 #include <vector>
 namespace cyaudio {
 enum class AudioBackend { automatic, wasapi, directSound, winmm, coreAudio, alsa, pulseAudio, jack, aaudio, openSl, webAudio, nullDevice, asio, custom };
+// Provider and operating-system backend are independent choices. Existing calls use miniaudio.
+enum class AudioProvider { miniaudio, portAudio };
 enum class AudioAccess { shared, exclusive };
 enum class AudioSampleFormat { unknown, unsigned8, signed16, signed24, signed32, float32 };
-struct AudioContextOptions { AudioBackend backend = AudioBackend::automatic; };
+struct AudioContextOptions {
+    AudioBackend backend = AudioBackend::automatic;
+    AudioProvider provider = AudioProvider::miniaudio;
+};
 struct AudioNativeFormat {
     AudioSampleFormat format = AudioSampleFormat::unknown;
     std::uint32_t channels = 0, sampleRate = 0; // Zero means backend reported wildcard/unknown.
@@ -24,7 +29,7 @@ struct AudioDeviceCapabilities {
     bool bufferRangeKnown = false, duplexKnown = false, duplex = false;
     std::uint32_t minimumBufferFrames = 0, maximumBufferFrames = 0;
 };
-enum class AudioMeasurementSource { unknown, callbackSteadyClock, backendDeclared, backendMeasured };
+enum class AudioMeasurementSource { unknown, callbackSteadyClock, backendDeclared, backendMeasured, backendClockEstimate };
 struct AudioTimingValue {
     std::uint64_t nanoseconds = 0;
     AudioMeasurementSource source = AudioMeasurementSource::unknown;
@@ -43,6 +48,7 @@ struct AudioStreamDescription {
     AudioAccess access = AudioAccess::shared;
     std::uint32_t sampleRate = 0, generation = 0;
     AudioStreamDirection input, output;
+    AudioProvider provider = AudioProvider::miniaudio;
 };
 struct AudioCallbackContext {
     AudioClockAnchor clock;
@@ -61,11 +67,13 @@ struct AudioDeviceInfo {
     std::string persistentId{};
     AudioBackend backend = AudioBackend::automatic;
     bool persistentIdentity = false;
+    AudioProvider provider = AudioProvider::miniaudio;
 };
 struct AudioDeviceSelector {
     std::string persistentId, name;
     AudioBackend backend = AudioBackend::automatic;
     bool input = false, useDefault = false, allowNameFallback = false;
+    AudioProvider provider = AudioProvider::miniaudio;
 };
 // Read-only resolver: never selects the first of ambiguous same-name devices.
 Status resolveAudioDevice(std::span<const AudioDeviceInfo>, const AudioDeviceSelector&, std::size_t& index) noexcept;
@@ -103,6 +111,7 @@ class AudioDeviceContext {
     Status prepare(const AudioContextOptions&) noexcept;
     Status capabilities(std::string_view id, bool input, AudioDeviceCapabilities&) noexcept;
     [[nodiscard]] AudioBackend backend() const noexcept;
+    [[nodiscard]] AudioProvider provider() const noexcept;
     Status enumerate(std::vector<AudioDeviceInfo>&) noexcept;
     [[nodiscard]] std::string backendName() const;
 
@@ -126,6 +135,7 @@ class AudioDevice {
     Status start() noexcept;
     Status stop() noexcept;
     void close() noexcept;
+    // Native activity query: control thread only (in particular for PortAudio).
     [[nodiscard]] bool running() const noexcept;
     [[nodiscard]] std::uint32_t sampleRate() const noexcept;
     [[nodiscard]] std::uint32_t callbackErrors() const noexcept;

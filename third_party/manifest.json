@@ -3653,6 +3653,420 @@
           "url": "https://raw.githubusercontent.com/jpcima/ysfx/8077347ccf4115567aed81400281dca57acbb0cc/thirdparty/WDL/source/WDL/win32_utf8.h"
         }
       ]
+    },
+    {
+      "name": "portaudio",
+      "license": "MIT",
+      "repository": "https://github.com/PortAudio/portaudio",
+      "revision": "147dd722548358763a8b649b3e4b41dfffbcfbb6",
+      "files": [
+        {
+          "upstreamPath": "CMakeLists.txt",
+          "archivePath": "third_party/portaudio/CMakeLists.txt",
+          "sha256": "1673e4dc1b24aa478573248d6d4e9204578cc1a187e1a3ea00d9f7ec7471b24d",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/CMakeLists.txt"
+        },
+        {
+          "upstreamPath": "LICENSE.txt",
+          "archivePath": "third_party/portaudio/LICENSE.txt",
+          "sha256": "ec52a1952d701f94e5135719a47376da4ee0b4a0201f1cafb49f61db6480ac3d",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/LICENSE.txt"
+        },
+        {
+          "upstreamPath": "README.md",
+          "archivePath": "third_party/portaudio/README.md",
+          "sha256": "6c7646a721fef968b57bfd0997202b325731df918e0662d202c9661bdb95f4ee",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/README.md"
+        },
+        {
+          "upstreamPath": "include/pa_asio.h",
+          "archivePath": "third_party/portaudio/include/pa_asio.h",
+          "sha256": "bb6b63ebdf43156fe1f6a10027e2d4156913a9d6a8807d5a1496e2c2da6f2a06",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_asio.h"
+        },
+        {
+          "upstreamPath": "include/pa_jack.h",
+          "archivePath": "third_party/portaudio/include/pa_jack.h",
+          "sha256": "356e87485764bc509c76ee3252ce7d7e66226bfea22349ea7abf1e557fc4ad6a",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_jack.h"
+        },
+        {
+          "upstreamPath": "include/pa_linux_alsa.h",
+          "archivePath": "third_party/portaudio/include/pa_linux_alsa.h",
+          "sha256": "99a260d46c31f16cf2638d755de5f8b6ec3161a20bfd00c65d21a69890cee8c8",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_linux_alsa.h"
+        },
+        {
+          "upstreamPath": "include/pa_mac_core.h",
+          "archivePath": "third_party/portaudio/include/pa_mac_core.h",
+          "sha256": "6287b3f6a031f5424130102a7a316871bc236780250cc297d4fb1ee8580dfa4d",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_mac_core.h"
+        },
+        {
+          "upstreamPath": "include/pa_win_ds.h",
+          "archivePath": "third_party/portaudio/include/pa_win_ds.h",
+          "sha256": "229360dd5a9b8c49449a44e70dbd6888b815f61f36efc16a2e9f69a9fa5d2d33",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_win_ds.h"
+        },
+        {
+          "upstreamPath": "include/pa_win_wasapi.h",
+          "archivePath": "third_party/portaudio/include/pa_win_wasapi.h",
+          "sha256": "d432700ce6aa1c98d485663e3e3dd17a0b5bc251c483b2b2e4f4c9b68cfb920f",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_win_wasapi.h"
+        },
+        {
+          "upstreamPath": "include/pa_win_waveformat.h",
+          "archivePath": "third_party/portaudio/include/pa_win_waveformat.h",
+          "sha256": "bf6153f7912b8c8ece7c6c607ff7630529a7126919e64547ffa62e4f39d9b125",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_win_waveformat.h"
+        },
+        {
+          "upstreamPath": "include/pa_win_wdmks.h",
+          "archivePath": "third_party/portaudio/include/pa_win_wdmks.h",
+          "sha256": "b1fa3bb297dd0338c24ae8dba75f8e88419e091d0edc9d7f6c7fc3ffd5cbaed5",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_win_wdmks.h"
+        },
+        {
+          "upstreamPath": "include/pa_win_wmme.h",
+          "archivePath": "third_party/portaudio/include/pa_win_wmme.h",
+          "sha256": "ddb6f6436fd58bd5b94ee99196e47fc9793403a514b4b035e6985309c7254422",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/pa_win_wmme.h"
+        },
+        {
+          "upstreamPath": "include/portaudio.h",
+          "archivePath": "third_party/portaudio/include/portaudio.h",
+          "sha256": "0e2d81de9cd89fb93bfd7f5dc1807627884cc7fe8a5483107328215e7bd447e5",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/include/portaudio.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_allocation.c",
+          "archivePath": "third_party/portaudio/src/common/pa_allocation.c",
+          "sha256": "409a7d958fb9b4fe07cb68fb49b3b97223e7a51b91c7d9c01a3905bb4beafd9f",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_allocation.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_allocation.h",
+          "archivePath": "third_party/portaudio/src/common/pa_allocation.h",
+          "sha256": "b870617c53ea6835cdac0262c2871ba7f07b43496a573794ebea58dff4c5e120",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_allocation.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_converters.c",
+          "archivePath": "third_party/portaudio/src/common/pa_converters.c",
+          "sha256": "cf8ceeefed4a937b3453ae0f0deea878350c5fab18f950a771b3131fe2639411",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_converters.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_converters.h",
+          "archivePath": "third_party/portaudio/src/common/pa_converters.h",
+          "sha256": "b35dc510132659bbeae57e940860389f30b4d11035680bc8d6b9fab0a9307dd7",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_converters.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_cpuload.c",
+          "archivePath": "third_party/portaudio/src/common/pa_cpuload.c",
+          "sha256": "2eb5c46ba5e3d21b6703fe8b9fe76fbe503b1b15e47784bfdc247826fab06be6",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_cpuload.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_cpuload.h",
+          "archivePath": "third_party/portaudio/src/common/pa_cpuload.h",
+          "sha256": "940a3ff065559ed88d4bf832ca8c2c46147eec5c429b3a6d6001b9426475d6e9",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_cpuload.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_debugprint.c",
+          "archivePath": "third_party/portaudio/src/common/pa_debugprint.c",
+          "sha256": "5d88d5ca9a8198ca92fe4987bceab66449bb5fe9948283734493aedf23066fff",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_debugprint.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_debugprint.h",
+          "archivePath": "third_party/portaudio/src/common/pa_debugprint.h",
+          "sha256": "df6cb76f0b2921d5e822d600e5427d07c5db89009827e7155e8388dee0742e27",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_debugprint.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_dither.c",
+          "archivePath": "third_party/portaudio/src/common/pa_dither.c",
+          "sha256": "45d8282ab863872117996a459b6012596ebdbb080c63b7353fe32760764412d6",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_dither.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_dither.h",
+          "archivePath": "third_party/portaudio/src/common/pa_dither.h",
+          "sha256": "d3a59ebb146efaab5c6fd47acda726342ab1445d585001bb1c0335c142bdb573",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_dither.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_endianness.h",
+          "archivePath": "third_party/portaudio/src/common/pa_endianness.h",
+          "sha256": "8e9e4fd85fedaa38e5a4d9d6c1ef7d20a59c3361572164a9d56d794424678da6",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_endianness.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_front.c",
+          "archivePath": "third_party/portaudio/src/common/pa_front.c",
+          "sha256": "10940593239e9691ce2096792b50e09a8f7453ec5f32db651d4b9039de96d8c5",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_front.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_gitrevision.h",
+          "archivePath": "third_party/portaudio/src/common/pa_gitrevision.h",
+          "sha256": "e716815af4bc86fd266d61f9ad0db915d36c7febeb1d226516959008c3021be7",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_gitrevision.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_hostapi.h",
+          "archivePath": "third_party/portaudio/src/common/pa_hostapi.h",
+          "sha256": "edfdd5a298c6f8ded2c85d70b2302edfdfb58189085055ede336cb04c159175a",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_hostapi.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_memorybarrier.h",
+          "archivePath": "third_party/portaudio/src/common/pa_memorybarrier.h",
+          "sha256": "76b3ea596eae86dc8558bdd55232c33951a2005210f02c0fc63b49c020a0fbfc",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_memorybarrier.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_process.c",
+          "archivePath": "third_party/portaudio/src/common/pa_process.c",
+          "sha256": "742aec8125e62fc7af659181b3dee5c781673c9886b60405f70fd1c0048e7825",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_process.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_process.h",
+          "archivePath": "third_party/portaudio/src/common/pa_process.h",
+          "sha256": "12148ea1c6ebae3292ead1ec565089be7fb4231d33d8e602050d1c93e01943ad",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_process.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_ringbuffer.c",
+          "archivePath": "third_party/portaudio/src/common/pa_ringbuffer.c",
+          "sha256": "b37c4fabbdaf3656268fb3ad4508ed34ca2f28fccaa181327ebd6b946dff5d8b",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_ringbuffer.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_ringbuffer.h",
+          "archivePath": "third_party/portaudio/src/common/pa_ringbuffer.h",
+          "sha256": "6458666c4100e596d4fa7667063c3add386701442cae50976321323e3594b3f7",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_ringbuffer.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_stream.c",
+          "archivePath": "third_party/portaudio/src/common/pa_stream.c",
+          "sha256": "52db804c6fe9448108d34b822aa48b03adbccc7289f2f489b844c4331c8a0348",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_stream.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_stream.h",
+          "archivePath": "third_party/portaudio/src/common/pa_stream.h",
+          "sha256": "ee2c4e8ba9e00fd02b8963286aac9b2569c46f57c383b315abb31ef8b7d67e15",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_stream.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_trace.c",
+          "archivePath": "third_party/portaudio/src/common/pa_trace.c",
+          "sha256": "3c2294b2897415ebe3e08f53d37e1bec87deb9980cb5a80ea06469a68937415c",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_trace.c"
+        },
+        {
+          "upstreamPath": "src/common/pa_trace.h",
+          "archivePath": "third_party/portaudio/src/common/pa_trace.h",
+          "sha256": "28532d331725270d8f6cab75d5ce8fbfddc6bfc8d46ab81eb53582809b9c62bf",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_trace.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_types.h",
+          "archivePath": "third_party/portaudio/src/common/pa_types.h",
+          "sha256": "498c801e59d0779c2f006128d09ab99bec3a0b3f88762bdac1382a33c0dc4bc2",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_types.h"
+        },
+        {
+          "upstreamPath": "src/common/pa_util.h",
+          "archivePath": "third_party/portaudio/src/common/pa_util.h",
+          "sha256": "5c0a6ee2134f8019231b5c08ac5174878afb751faa52fea271ad89e144489d6a",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/common/pa_util.h"
+        },
+        {
+          "upstreamPath": "src/hostapi/alsa/pa_linux_alsa.c",
+          "archivePath": "third_party/portaudio/src/hostapi/alsa/pa_linux_alsa.c",
+          "sha256": "8ddfc29394321bc57f10a1e7759b379716a4bcc9d519a4f861b74bfaf61da9fd",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/alsa/pa_linux_alsa.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/coreaudio/notes.txt",
+          "archivePath": "third_party/portaudio/src/hostapi/coreaudio/notes.txt",
+          "sha256": "f8df130960446302ba433e74f8b8ac1566d5baf5d65f2450fc849c690ecfc1b8",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/coreaudio/notes.txt"
+        },
+        {
+          "upstreamPath": "src/hostapi/coreaudio/pa_mac_core.c",
+          "archivePath": "third_party/portaudio/src/hostapi/coreaudio/pa_mac_core.c",
+          "sha256": "7b9fd8c0ce0cdcdfc9ad068f4fec2eb56c7e340793002244705aa1b299bffd27",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/coreaudio/pa_mac_core.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/coreaudio/pa_mac_core_blocking.c",
+          "archivePath": "third_party/portaudio/src/hostapi/coreaudio/pa_mac_core_blocking.c",
+          "sha256": "75258f33954dd2194342efdc6a13fa789b3b74871298ea7bbb4f0952067b6d33",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/coreaudio/pa_mac_core_blocking.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/coreaudio/pa_mac_core_blocking.h",
+          "archivePath": "third_party/portaudio/src/hostapi/coreaudio/pa_mac_core_blocking.h",
+          "sha256": "bdb49a568ec08a7a6bd9c2d70f1f02f5fbb9f5a2cd691bc5664070cef23d998b",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/coreaudio/pa_mac_core_blocking.h"
+        },
+        {
+          "upstreamPath": "src/hostapi/coreaudio/pa_mac_core_internal.h",
+          "archivePath": "third_party/portaudio/src/hostapi/coreaudio/pa_mac_core_internal.h",
+          "sha256": "e161cced9862fd70b22c7c913430b06f0cfef8d6cec341026462841b35692c7a",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/coreaudio/pa_mac_core_internal.h"
+        },
+        {
+          "upstreamPath": "src/hostapi/coreaudio/pa_mac_core_utilities.c",
+          "archivePath": "third_party/portaudio/src/hostapi/coreaudio/pa_mac_core_utilities.c",
+          "sha256": "ed1329ac9295e7eaec924f0b69f19d9292ff700cb99c40e38a5198427e871c40",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/coreaudio/pa_mac_core_utilities.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/coreaudio/pa_mac_core_utilities.h",
+          "archivePath": "third_party/portaudio/src/hostapi/coreaudio/pa_mac_core_utilities.h",
+          "sha256": "e046260d82d7ed7e469d2c54fcaa6d2a8cad473837c7f99eb35fe0ca88da3aa9",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/coreaudio/pa_mac_core_utilities.h"
+        },
+        {
+          "upstreamPath": "src/hostapi/dsound/pa_win_ds.c",
+          "archivePath": "third_party/portaudio/src/hostapi/dsound/pa_win_ds.c",
+          "sha256": "863a4d5f1972ce43f9f7f318437b06984ef62e27cc5394b3a86119edf72b5a17",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/dsound/pa_win_ds.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/dsound/pa_win_ds_dynlink.c",
+          "archivePath": "third_party/portaudio/src/hostapi/dsound/pa_win_ds_dynlink.c",
+          "sha256": "ab836b225fcdc20df1e431cefda8147165be0de9e2a530aa36bd670e4e0f2de1",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/dsound/pa_win_ds_dynlink.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/dsound/pa_win_ds_dynlink.h",
+          "archivePath": "third_party/portaudio/src/hostapi/dsound/pa_win_ds_dynlink.h",
+          "sha256": "0bbd38d87b0139158f23285829c0fe8cc3c1a26204207cfec13fa03abd1bf344",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/dsound/pa_win_ds_dynlink.h"
+        },
+        {
+          "upstreamPath": "src/hostapi/jack/pa_jack.c",
+          "archivePath": "third_party/portaudio/src/hostapi/jack/pa_jack.c",
+          "sha256": "a1730187bbd7420ceb8512d9cc66b58b767571a3ade125d7ca073b32dc14b355",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/jack/pa_jack.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/skeleton/README.txt",
+          "archivePath": "third_party/portaudio/src/hostapi/skeleton/README.txt",
+          "sha256": "38382d946a56386d96d659f04eba27ffc0f4b8834e1bc5ca3667065f17df4adb",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/skeleton/README.txt"
+        },
+        {
+          "upstreamPath": "src/hostapi/skeleton/pa_hostapi_skeleton.c",
+          "archivePath": "third_party/portaudio/src/hostapi/skeleton/pa_hostapi_skeleton.c",
+          "sha256": "adaffa1da29454a7644fc41bad5c52e64ccc4cc2eef112a56efaba4f81e174ca",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/skeleton/pa_hostapi_skeleton.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/wasapi/pa_win_wasapi.c",
+          "archivePath": "third_party/portaudio/src/hostapi/wasapi/pa_win_wasapi.c",
+          "sha256": "059ef9c9f749f12a83200cd9070af5f2f9d3bb1a3daedac2cfed689e09131dbe",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/wasapi/pa_win_wasapi.c"
+        },
+        {
+          "upstreamPath": "src/hostapi/wasapi/readme.txt",
+          "archivePath": "third_party/portaudio/src/hostapi/wasapi/readme.txt",
+          "sha256": "8ff0d3c076cf382c0e76faaf523513ceba263916675883d0eca7d87a977f7012",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/wasapi/readme.txt"
+        },
+        {
+          "upstreamPath": "src/hostapi/wmme/pa_win_wmme.c",
+          "archivePath": "third_party/portaudio/src/hostapi/wmme/pa_win_wmme.c",
+          "sha256": "94f8c84ad3d7d67c03e812bd48492dfd2f8c9ed0a1b7a26bc380aa2015445743",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/hostapi/wmme/pa_win_wmme.c"
+        },
+        {
+          "upstreamPath": "src/os/unix/pa_unix_hostapis.c",
+          "archivePath": "third_party/portaudio/src/os/unix/pa_unix_hostapis.c",
+          "sha256": "797272cb8fdf63b8170e32f552005c9f30afa06dc9ab7632baeb99a99b4ae7ae",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/unix/pa_unix_hostapis.c"
+        },
+        {
+          "upstreamPath": "src/os/unix/pa_unix_util.c",
+          "archivePath": "third_party/portaudio/src/os/unix/pa_unix_util.c",
+          "sha256": "622a70606ccd76f25c8e8d4831216730f9cd42967aca7a48bf2bfacefc731799",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/unix/pa_unix_util.c"
+        },
+        {
+          "upstreamPath": "src/os/unix/pa_unix_util.h",
+          "archivePath": "third_party/portaudio/src/os/unix/pa_unix_util.h",
+          "sha256": "cfc61ae3a664dcef8904d0f30e4426bbd57520dad61bed5217cfa9a718683688",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/unix/pa_unix_util.h"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_win_coinitialize.c",
+          "archivePath": "third_party/portaudio/src/os/win/pa_win_coinitialize.c",
+          "sha256": "762ad9fd05ed2e244605ec3bf194503e7319a7c1135ac31484866a292e69593a",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_win_coinitialize.c"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_win_coinitialize.h",
+          "archivePath": "third_party/portaudio/src/os/win/pa_win_coinitialize.h",
+          "sha256": "ce04a2267bb35d6b808d42bed3e309c6a510585284a5b8f0e27ae282a4fa6960",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_win_coinitialize.h"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_win_hostapis.c",
+          "archivePath": "third_party/portaudio/src/os/win/pa_win_hostapis.c",
+          "sha256": "9953cd2a6b7b984d9be21f90348ade00d956957c1ca16ccfa428cbf709a7ed67",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_win_hostapis.c"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_win_util.c",
+          "archivePath": "third_party/portaudio/src/os/win/pa_win_util.c",
+          "sha256": "d8e89c90e07a2aada289feccc714e98a3d0bd9b9af36adc1685831e48b8f0869",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_win_util.c"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_win_waveformat.c",
+          "archivePath": "third_party/portaudio/src/os/win/pa_win_waveformat.c",
+          "sha256": "60d3af993fe0e49e024e6bbc00978a88798bbad981d97a493cbf011abfa5f57a",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_win_waveformat.c"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_win_wdmks_utils.c",
+          "archivePath": "third_party/portaudio/src/os/win/pa_win_wdmks_utils.c",
+          "sha256": "a2e6b64ef9ae730b11cab6f8064b18f9e37eb39c6ef476cb20d9987292032f53",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_win_wdmks_utils.c"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_win_wdmks_utils.h",
+          "archivePath": "third_party/portaudio/src/os/win/pa_win_wdmks_utils.h",
+          "sha256": "461d9f160047a7f39a4adbd16c3bff37a2cc664f4fd1613a02b5482d64de02bd",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_win_wdmks_utils.h"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_x86_plain_converters.c",
+          "archivePath": "third_party/portaudio/src/os/win/pa_x86_plain_converters.c",
+          "sha256": "bb2f41b64dd0b5fdc0a440898cce2be831e99b0c23d551a61f405cb295e39ab1",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_x86_plain_converters.c"
+        },
+        {
+          "upstreamPath": "src/os/win/pa_x86_plain_converters.h",
+          "archivePath": "third_party/portaudio/src/os/win/pa_x86_plain_converters.h",
+          "sha256": "16992c48d20e30d653cb77bc213ce28d02ba762b9754c5f1322bb368e014ccfe",
+          "url": "https://raw.githubusercontent.com/PortAudio/portaudio/147dd722548358763a8b649b3e4b41dfffbcfbb6/src/os/win/pa_x86_plain_converters.h"
+        }
+      ],
+      "adaptedFiles": [],
+      "scope": "Unmodified v19.7.0 private static audio I/O provider; explicit system backends; no ASIO SDK or upstream tests/examples. Original CyAudioCore build recipe. Upstream MinGW compatibility SDK headers are excluded; use the selected compiler/platform SDK.",
+      "noticePath": "third_party/licenses/portaudio.txt",
+      "copyrights": []
     }
   ]
 }

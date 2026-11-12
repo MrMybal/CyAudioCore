@@ -20,3 +20,9 @@ storage and ownership queues; foreign plugins/scripts retain their own behavior.
 The worker API preserves its single-plugin mailbox protocol and fixed one-block
 pipeline latency. Application-side grouping/scheduling and security sandboxing are
 separate responsibilities. See [migration](Migration.fr.md) and [plugins](Plugins.md).
+
+AudioProvider selects miniaudio (default) or the opt-in PortAudio implementation;
+AudioBackend remains the system API. Private context/stream interfaces own native
+resources. Both providers share a prepared planar/interleaved callback adapter
+using only public CyDSP buffers, views, VectorOps and layout conversions.
+See [provider contracts and limits](PortAudio.fr.md).

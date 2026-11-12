@@ -32,6 +32,8 @@ struct AudioDeviceDriver {
     std::uint32_t (*notifications)(void*) noexcept = nullptr;
     Status (*description)(void*,AudioStreamDescription&) noexcept = nullptr;
     Status (*capabilities)(void*,std::string_view,bool,AudioDeviceCapabilities&) noexcept = nullptr;
+    // Optional native timing path; absent drivers retain the legacy clock bridge.
+    Status (*openWithContext)(void*,const AudioDeviceConfig&,AudioDeviceContextCallback,void*) noexcept = nullptr;
 };
 // Owns the native context by default. Poll on the control owner; no hidden thread.
 // Callbacks execute from this owner and must not reenter lifecycle/poll operations.

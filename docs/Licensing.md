@@ -77,5 +77,15 @@ separate question from implementing the host. No third-party effects are bundled
 fixtures are original CyDSP test code.
 
 The DSP-specific Signalsmith production code and upstream comparison sources belong
-to CyDSP, not this repository. The manifest here inventories only the 13 service
+to CyDSP, not this repository. The manifest here inventories only the 14 service
 components; it is the authority for files actually bundled here.
+
+## PortAudio
+
+Optional PortAudio v19.7.0 is pinned to 147dd722548358763a8b649b3e4b41dfffbcfbb6.
+The permissive MIT-style grant and nonbinding requests are preserved byte-exactly
+in LICENSE.txt and the installed portaudio notice, together with source attributions.
+All imported files retain their upstream notices and manifest SHA-256 hashes.
+An original static-only CMake recipe selects system backends explicitly; no ASIO
+SDK, upstream example, test, or implicit proprietary SDK discovery is used.
+See [build options and platform dependencies](PortAudio.fr.md).

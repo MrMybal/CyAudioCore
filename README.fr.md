@@ -56,6 +56,8 @@ Les tests et mesures sont désactivés par défaut. Le script scripts/run_native
 
 ---
 
+Les périphériques utilisent miniaudio par défaut. `CYAUDIOCORE_WITH_PORTAUDIO=ON` ajoute un fournisseur statique derrière les mêmes API. `AudioProvider` choisit le fournisseur et `AudioBackend` l’API système. Voir [options, exemple et limites](docs/PortAudio.fr.md).
+
 ## Licence
 
 CyAudioCore utilise la [licence MIT](LICENSE). Les dépendances conservent leurs propres licences ; les notices complètes sont dans [Licensing.md](docs/Licensing.md).
@@ -64,6 +66,7 @@ CyAudioCore utilise la [licence MIT](LICENSE). Les dépendances conservent leurs
 | --- | --- | --- |
 | [CyDSP](https://github.com/MrMybal/CyDSP) | MIT | Dépendance numérique séparée ; dépôt privé |
 | [miniaudio](https://github.com/mackron/miniaudio) | [MIT-0](third_party/licenses/miniaudio.txt) | Backend privé des périphériques audio |
+| [PortAudio](https://github.com/PortAudio/portaudio) | [MIT](third_party/licenses/portaudio.txt) | Fournisseur privé d’E/S audio statique, optionnel |
 | [rtmidi](https://github.com/thestk/rtmidi) | [MIT](third_party/licenses/rtmidi.txt) | Backend privé des ports MIDI1 |
 | [choc](https://github.com/Tracktion/choc) | [ISC AND BSD-3-Clause AND LicenseRef-minimp3-Public-Domain](third_party/licenses/choc.txt) | Codecs audio privés et leurs sous-composants |
 | [windows-midi](https://github.com/microsoft/MIDI) | [MIT](third_party/licenses/windows-midi.txt) | Déclarations natives privées et builders MIDI2 |

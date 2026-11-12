@@ -56,6 +56,8 @@ Tests and measurements are off by default. scripts/run_native.py explicitly enab
 
 ---
 
+Audio devices default to miniaudio. `CYAUDIOCORE_WITH_PORTAUDIO=ON` adds a private static provider behind the same API. `AudioProvider` selects the provider; `AudioBackend` selects the system API. See [options, example and limitations](docs/PortAudio.fr.md).
+
 ## License
 
 CyAudioCore uses the [MIT license](LICENSE). Dependencies retain their own terms; complete notice guidance is in [Licensing.md](docs/Licensing.md).
@@ -64,6 +66,7 @@ CyAudioCore uses the [MIT license](LICENSE). Dependencies retain their own terms
 | --- | --- | --- |
 | [CyDSP](https://github.com/MrMybal/CyDSP) | MIT | Separate numerical dependency; private repository |
 | [miniaudio](https://github.com/mackron/miniaudio) | [MIT-0](third_party/licenses/miniaudio.txt) | Unmodified private hardware-audio backend, built without engine, resource manager, decoders, encoders or generators; selected MIT-0 alternative. |
+| [PortAudio](https://github.com/PortAudio/portaudio) | [MIT](third_party/licenses/portaudio.txt) | Optional private static audio I/O provider |
 | [rtmidi](https://github.com/thestk/rtmidi) | [MIT](third_party/licenses/rtmidi.txt) | Unmodified private backend for physical MIDI input/output; nonbinding contribution request is not a license condition. |
 | [choc](https://github.com/Tracktion/choc) | [ISC AND BSD-3-Clause AND LicenseRef-minimp3-Public-Domain](third_party/licenses/choc.txt) | Private pinned file codecs; separately adapted WAV reader/writer preserves LIST subtype/raw metadata and validates RIFF padding/lengths. Pristine upstream headers retained byte-exact. ISC wrapper and embedded permissive codec notices retained. |
 | [windows-midi](https://github.com/microsoft/MIDI) | [MIT](third_party/licenses/windows-midi.txt) | Only native Windows MIDI Services COM ABI declarations and endpoint GUIDs adapted; no service, driver, SDK binary, synthesizer or GUI imported. Original interface definitions retained for pinned provenance. Stream/Function Block identity and text bit-packing adapted into original bounded portable helpers; no WinRT implementation/runtime linked. |

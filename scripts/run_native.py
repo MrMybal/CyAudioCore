@@ -15,9 +15,11 @@ p.add_argument('--cydsp-source',type=Path,default=ROOT.parent/'CyDSP')
 p.add_argument('--build-dir',type=Path)
 p.add_argument('--measure',action='store_true')
 p.add_argument('--sanitize',action='store_true')
+p.add_argument('--portaudio',action='store_true',help='Build the optional static PortAudio provider; tests use a simulated API')
+p.add_argument('--services-only',action='store_true',help='Validate CyAudioCore without building independent CyDSP test/check targets')
 p.add_argument('--cmake',default=r'C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe')
 a=p.parse_args()
-tag=a.arch+('-clang' if a.compiler=='clang' else '')+('-asan' if a.sanitize else '')
+tag=a.arch+('-clang' if a.compiler=='clang' else '')+('-asan' if a.sanitize else '')+('-portaudio' if a.portaudio else '')
 folder=ROOT/'build'/('native-'+tag+('-ninja' if a.compiler=='clang' else ''))
 if a.build_dir: folder=a.build_dir.resolve()
 logs=ROOT/'build/native-logs';logs.mkdir(parents=True,exist_ok=True)
@@ -27,7 +29,7 @@ try:
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,r'HARDWARE\DESCRIPTION\System\CentralProcessor\0') as key:
         report['cpu']=winreg.QueryValueEx(key,'ProcessorNameString')[0].strip()
 except (ImportError,OSError): report['cpu']=platform.processor()
-environment=os.environ.copy()
+environment={key.upper():value for key,value in os.environ.items()}
 if a.sanitize:
     runtime=Path('C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Tools/MSVC/14.40.33807/bin/Hostx64')/('x86' if a.arch=='x86' else 'x64')
     environment['PATH']=str(runtime)+os.pathsep+environment.get('PATH','')
@@ -39,7 +41,7 @@ def run(name,command,timeout=240):
         raise RuntimeError(name+' exit '+str(result.returncode)+' ('+hex(result.returncode & 0xffffffff)+'): '+result.stdout[-6000:])
     return result.stdout
 try:
-    options=['-DCYDSP_ENABLE_SIMD='+('OFF' if a.arch=='scalar' else 'ON'),'-DCYDSP_BUILD_TESTS=ON','-DCYDSP_COMPILE_CHECKS=ON','-DCYAUDIOCORE_BUILD_TESTS=ON','-DCYAUDIOCORE_COMPILE_CHECKS=ON','-DCYAUDIOCORE_CYDSP_SOURCE_DIR='+str(a.cydsp_source.resolve()),
+    options=['-DCYAUDIOCORE_WITH_PORTAUDIO='+('ON' if a.portaudio else 'OFF'),'-DCYDSP_ENABLE_SIMD='+('OFF' if a.arch=='scalar' else 'ON'),'-DCYDSP_BUILD_TESTS='+('OFF' if a.services_only else 'ON'),'-DCYDSP_COMPILE_CHECKS='+('OFF' if a.services_only else 'ON'),'-DCYAUDIOCORE_BUILD_TESTS=ON','-DCYAUDIOCORE_COMPILE_CHECKS=ON','-DCYAUDIOCORE_CYDSP_SOURCE_DIR='+str(a.cydsp_source.resolve()),
         '-DCYAUDIOCORE_BUILD_MEASUREMENTS='+('ON' if a.measure else 'OFF'),'-DCYDSP_SANITIZE_ADDRESS='+('ON' if a.sanitize else 'OFF'),'-DCYAUDIOCORE_SANITIZE_ADDRESS='+('ON' if a.sanitize else 'OFF')]
     if a.compiler=='clang':
         vs=Path('C:/Program Files/Microsoft Visual Studio/2022/Community')
@@ -62,7 +64,8 @@ try:
     run('build',[a.cmake,'--build',str(folder),'--config','Release','--parallel','6'])
     report['regressions']=run('regressions',[str(executable/'cyaudio_tests.exe')])
     dependency_executable=folder/'cydsp'/('' if a.compiler=='clang' else 'Release')/'cydsp_tests.exe'
-    report['dspRegressions']=run('dsp-regressions',[str(dependency_executable)])
+    if not a.services_only:
+        report['dspRegressions']=run('dsp-regressions',[str(dependency_executable)])
     if a.measure:
         report['measurements']=run('measurements',[str(executable/'cyaudio_measurements.exe')],600)
     report['status']='passed'

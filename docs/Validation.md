@@ -16,9 +16,7 @@ The delivered source snapshot was validated as two independent projects.
 | CyAudioCore -> public CyDSP boundary, no reverse dependency | Passed |
 | Source manifests | 5 DSP + 13 service components; hashes/notices verified |
 
-Gitleaks default-rule snapshot scanning found zero secrets in both candidates;
-final source snapshots are scanned again after applying the split. History is not
-scanned by this check. No CI, push, release, application migration, physical audio/MIDI
+No CI, push, release, application migration, physical audio/MIDI
 or CyUI integration was performed. Native editor/worker tests use original fixtures
 and hidden Windows parent windows, not installed third-party plugins.
 

@@ -3,6 +3,12 @@
 #include <stdexcept>
 void ciPropertyRegression(); void ciAdvancedRegression(); void dawMidiRegression();
 void midi2ProtocolRegression(); void dawRegression(); void midiProtocolRegression(); void instrumentRegression();
+#if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
+void audioProviderRegression();
+#if CYAUDIOCORE_WITH_PORTAUDIO
+void portAudioRegression();
+#endif
+#endif
 #if defined(CYAUDIOCORE_TEST_IO)
 void midi2NativeRegression(); void deviceContractsRegression(); void midiInputContractsRegression();
 void pcmProxyRegression(); void metadataRegression(); void dawFilesRegression(); void ioRegression();
@@ -19,6 +25,12 @@ int main(int, char** argv) {
  try {
   ciPropertyRegression(); ciAdvancedRegression(); dawMidiRegression(); midi2ProtocolRegression();
   dawRegression(); midiProtocolRegression(); instrumentRegression();
+#if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
+  audioProviderRegression();
+#if CYAUDIOCORE_WITH_PORTAUDIO
+  portAudioRegression();
+#endif
+#endif
 #if defined(CYAUDIOCORE_TEST_IO)
   midi2NativeRegression(); deviceContractsRegression(); midiInputContractsRegression();
   pcmProxyRegression(); metadataRegression(); dawFilesRegression(); ioRegression();
