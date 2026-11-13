@@ -1,0 +1,1219 @@
+{
+  "coreCommit": "bb26e93604d43de2069694b0791bc0bcf5a53ea6",
+  "coreCompilerInputs": "61dee916f9a9a4762c3dfdfb01a361955c613384896f74848b1178a18cbb8abc",
+  "dependencyCommit": "fda6bd30c5b622795cc08e8bd2750188a6c5a0c0",
+  "dependencyCompilerInputs": "07393a6935e0ad0e5661193196ed550403432ad3a428c42c6952114d701e2326",
+  "dawCommit": "1a75df5198e1ea6fea8fa0f29906004d088e93e9",
+  "dawProbeHeaders": {
+    "include/cydaw/audio/SampleBuffer.h": "782b3fae605dbea148269781106a35a45da37f80089c88338ba4558d590ec2fe",
+    "include/cydaw/base/Geometry.h": "2e06b5165dd748f6c59b0f7f4078e233dae2d589bad734498071320e4a2ea733",
+    "include/cydaw/base/Text.h": "de38d9ba8b54ddab9af6b373e9cfad763cc65acc68892e6dc6d6b0715a4a27e6"
+  },
+  "physicalDevices": false,
+  "platform": "Windows x64",
+  "compiler": "MSVC 19.40 Release",
+  "coreProbeFp": "strict",
+  "applicationHeaderProbeFp": "precise",
+  "sampleRate": 48000,
+  "timingMeaning": "median of 31 batch means, 32 calls/batch; projected CPU is a normalization, not measured whole-DAW CPU",
+  "productionSourcesChanged": false,
+  "driverScriptSha256": "e0bb7ca18401448ea75496e0c91ab919104a6818393c4714a9f4c018accde8b6",
+  "backgroundAcceptance": "No compiler/linker at boundaries; unchanged CyDAW process set; less than 1 percent of one core observed in CyDAW over trial",
+  "trials": 5,
+  "rows": [
+    {
+      "case": "mix32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "scalar",
+      "medianBatchMeanNs": 1203.125,
+      "medianBatchMeanNsTrials": [
+        1190.625,
+        1200,
+        1215.625,
+        1203.125,
+        1203.125
+      ],
+      "projectedCorePercent48000": 0.0451171875,
+      "projectedCorePercent48000Trials": [
+        0.0446484375,
+        0.045,
+        0.0455859375,
+        0.0451171875,
+        0.0451171875
+      ],
+      "signature": 5.91589887905866
+    },
+    {
+      "case": "rms32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "scalar",
+      "medianBatchMeanNs": 5865.625,
+      "medianBatchMeanNsTrials": [
+        5731.25,
+        5837.5,
+        5918.75,
+        5890.625,
+        5865.625
+      ],
+      "projectedCorePercent48000": 0.2199609375,
+      "projectedCorePercent48000Trials": [
+        0.214921875,
+        0.21890625,
+        0.221953125,
+        0.2208984375,
+        0.2199609375
+      ],
+      "signature": 5.60690474510193
+    },
+    {
+      "case": "mix32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 1015.625,
+      "medianBatchMeanNsTrials": [
+        978.125,
+        1025,
+        1015.625,
+        1062.5,
+        1009.375
+      ],
+      "projectedCorePercent48000": 0.0380859375,
+      "projectedCorePercent48000Trials": [
+        0.0366796875,
+        0.0384375,
+        0.0380859375,
+        0.03984375,
+        0.0378515625
+      ],
+      "signature": 5.91589887905866
+    },
+    {
+      "case": "rms32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 1931.25,
+      "medianBatchMeanNsTrials": [
+        1878.125,
+        1925,
+        1931.25,
+        1943.75,
+        1943.75
+      ],
+      "projectedCorePercent48000": 0.072421875,
+      "projectedCorePercent48000Trials": [
+        0.0704296875,
+        0.0721875,
+        0.072421875,
+        0.072890625,
+        0.072890625
+      ],
+      "signature": 5.6069061756134
+    },
+    {
+      "case": "callback_planar",
+      "frames": 128,
+      "instances": 1,
+      "backend": "avx512",
+      "medianBatchMeanNs": 90.625,
+      "medianBatchMeanNsTrials": [
+        90.625,
+        90.625,
+        90.625,
+        90.625,
+        90.625
+      ],
+      "projectedCorePercent48000": 0.0033984375,
+      "projectedCorePercent48000Trials": [
+        0.0033984375,
+        0.0033984375,
+        0.0033984375,
+        0.0033984375,
+        0.0033984375
+      ],
+      "signature": 32
+    },
+    {
+      "case": "callback_flat",
+      "frames": 128,
+      "instances": 1,
+      "backend": "avx512",
+      "medianBatchMeanNs": 278.125,
+      "medianBatchMeanNsTrials": [
+        271.875,
+        275,
+        281.25,
+        278.125,
+        278.125
+      ],
+      "projectedCorePercent48000": 0.0104296875,
+      "projectedCorePercent48000Trials": [
+        0.0101953125,
+        0.0103125,
+        0.010546875,
+        0.0104296875,
+        0.0104296875
+      ],
+      "signature": 32
+    },
+    {
+      "case": "callback_planar_diagnostics",
+      "frames": 128,
+      "instances": 1,
+      "backend": "avx512",
+      "medianBatchMeanNs": 121.875,
+      "medianBatchMeanNsTrials": [
+        121.875,
+        121.875,
+        121.875,
+        121.875,
+        121.875
+      ],
+      "projectedCorePercent48000": 0.0045703125,
+      "projectedCorePercent48000Trials": [
+        0.0045703125,
+        0.0045703125,
+        0.0045703125,
+        0.0045703125,
+        0.0045703125
+      ],
+      "signature": 32
+    },
+    {
+      "case": "callback_flat_diagnostics",
+      "frames": 128,
+      "instances": 1,
+      "backend": "avx512",
+      "medianBatchMeanNs": 318.75,
+      "medianBatchMeanNsTrials": [
+        306.25,
+        312.5,
+        318.75,
+        318.75,
+        318.75
+      ],
+      "projectedCorePercent48000": 0.011953125,
+      "projectedCorePercent48000Trials": [
+        0.011484375,
+        0.01171875,
+        0.011953125,
+        0.011953125,
+        0.011953125
+      ],
+      "signature": 32
+    },
+    {
+      "case": "transport32_paused",
+      "frames": 128,
+      "instances": 32,
+      "backend": "automatic",
+      "medianBatchMeanNs": 1737.5,
+      "medianBatchMeanNsTrials": [
+        1715.625,
+        1765.625,
+        1753.125,
+        1728.125,
+        1737.5
+      ],
+      "projectedCorePercent48000": 0.06515625,
+      "projectedCorePercent48000Trials": [
+        0.0643359375,
+        0.0662109375,
+        0.0657421875,
+        0.0648046875,
+        0.06515625
+      ],
+      "signature": 0
+    },
+    {
+      "case": "transport32_playing",
+      "frames": 128,
+      "instances": 32,
+      "backend": "automatic",
+      "medianBatchMeanNs": 4234.375,
+      "medianBatchMeanNsTrials": [
+        4215.625,
+        4234.375,
+        4343.75,
+        4237.5,
+        4215.625
+      ],
+      "projectedCorePercent48000": 0.1587890625,
+      "projectedCorePercent48000Trials": [
+        0.1580859375,
+        0.1587890625,
+        0.162890625,
+        0.15890625,
+        0.1580859375
+      ],
+      "signature": 189.308785617352
+    },
+    {
+      "case": "dsp16_compressor",
+      "frames": 128,
+      "instances": 16,
+      "backend": "public_dsp",
+      "medianBatchMeanNs": 129125,
+      "medianBatchMeanNsTrials": [
+        126178.125,
+        127856.25,
+        129925,
+        129125,
+        129784.375
+      ],
+      "projectedCorePercent48000": 4.8421875,
+      "projectedCorePercent48000Trials": [
+        4.7316796875,
+        4.794609375,
+        4.8721875,
+        4.8421875,
+        4.8669140625
+      ],
+      "signature": 5.68184692086652
+    },
+    {
+      "case": "dsp16_compressor_chorus_reverb",
+      "frames": 128,
+      "instances": 16,
+      "backend": "public_dsp",
+      "medianBatchMeanNs": 221671.875,
+      "medianBatchMeanNsTrials": [
+        216412.5,
+        219531.25,
+        229390.625,
+        221671.875,
+        225003.125
+      ],
+      "projectedCorePercent48000": 8.3126953125,
+      "projectedCorePercent48000Trials": [
+        8.11546875,
+        8.232421875,
+        8.6021484375,
+        8.3126953125,
+        8.4376171875
+      ],
+      "signature": 12.3413048300426
+    },
+    {
+      "case": "synth8x8_oscillator",
+      "frames": 128,
+      "instances": 8,
+      "backend": "automatic",
+      "medianBatchMeanNs": 50556.25,
+      "medianBatchMeanNsTrials": [
+        50159.375,
+        51084.375,
+        51093.75,
+        50556.25,
+        49987.5
+      ],
+      "projectedCorePercent48000": 1.895859375,
+      "projectedCorePercent48000Trials": [
+        1.8809765625,
+        1.9156640625,
+        1.916015625,
+        1.895859375,
+        1.87453125
+      ],
+      "signature": 45.8692935705185
+    },
+    {
+      "case": "vst3_fixture8_process",
+      "frames": 128,
+      "instances": 8,
+      "backend": "fixture",
+      "medianBatchMeanNs": 3075,
+      "medianBatchMeanNsTrials": [
+        3003.125,
+        3075,
+        3162.5,
+        3046.875,
+        3296.875
+      ],
+      "projectedCorePercent48000": 0.1153125,
+      "projectedCorePercent48000Trials": [
+        0.1126171875,
+        0.1153125,
+        0.11859375,
+        0.1142578125,
+        0.1236328125
+      ],
+      "signature": 2.95794977527112
+    },
+    {
+      "case": "vst3_fixture8_control_pump",
+      "frames": 128,
+      "instances": 8,
+      "backend": "fixture",
+      "medianBatchMeanNs": 93.75,
+      "medianBatchMeanNsTrials": [
+        93.75,
+        93.75,
+        93.75,
+        93.75,
+        90.625
+      ],
+      "projectedCorePercent48000": 0.003515625,
+      "projectedCorePercent48000Trials": [
+        0.003515625,
+        0.003515625,
+        0.003515625,
+        0.003515625,
+        0.0033984375
+      ],
+      "signature": 0
+    },
+    {
+      "case": "mix32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "scalar",
+      "medianBatchMeanNs": 3928.125,
+      "medianBatchMeanNsTrials": [
+        3834.375,
+        3896.875,
+        3946.875,
+        3928.125,
+        3978.125
+      ],
+      "projectedCorePercent48000": 0.0184130859375,
+      "projectedCorePercent48000Trials": [
+        0.0179736328125,
+        0.0182666015625,
+        0.0185009765625,
+        0.0184130859375,
+        0.0186474609375
+      ],
+      "signature": 5.33894063998014
+    },
+    {
+      "case": "rms32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "scalar",
+      "medianBatchMeanNs": 37853.125,
+      "medianBatchMeanNsTrials": [
+        37162.5,
+        37853.125,
+        38546.875,
+        37928.125,
+        37140.625
+      ],
+      "projectedCorePercent48000": 0.1774365234375,
+      "projectedCorePercent48000Trials": [
+        0.17419921875,
+        0.1774365234375,
+        0.1806884765625,
+        0.1777880859375,
+        0.1740966796875
+      ],
+      "signature": 5.67946863174438
+    },
+    {
+      "case": "mix32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 2821.875,
+      "medianBatchMeanNsTrials": [
+        2818.75,
+        2787.5,
+        2834.375,
+        2821.875,
+        4021.875
+      ],
+      "projectedCorePercent48000": 0.0132275390625,
+      "projectedCorePercent48000Trials": [
+        0.013212890625,
+        0.01306640625,
+        0.0132861328125,
+        0.0132275390625,
+        0.0188525390625
+      ],
+      "signature": 5.33894063998014
+    },
+    {
+      "case": "rms32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 3415.625,
+      "medianBatchMeanNsTrials": [
+        3343.75,
+        3415.625,
+        3425,
+        3453.125,
+        3343.75
+      ],
+      "projectedCorePercent48000": 0.0160107421875,
+      "projectedCorePercent48000Trials": [
+        0.015673828125,
+        0.0160107421875,
+        0.0160546875,
+        0.0161865234375,
+        0.015673828125
+      ],
+      "signature": 5.67947006225586
+    },
+    {
+      "case": "callback_planar",
+      "frames": 1024,
+      "instances": 1,
+      "backend": "avx512",
+      "medianBatchMeanNs": 156.25,
+      "medianBatchMeanNsTrials": [
+        153.125,
+        156.25,
+        156.25,
+        159.375,
+        153.125
+      ],
+      "projectedCorePercent48000": 0.000732421875,
+      "projectedCorePercent48000Trials": [
+        0.0007177734375,
+        0.000732421875,
+        0.000732421875,
+        0.0007470703125,
+        0.0007177734375
+      ],
+      "signature": 256
+    },
+    {
+      "case": "callback_flat",
+      "frames": 1024,
+      "instances": 1,
+      "backend": "avx512",
+      "medianBatchMeanNs": 1671.875,
+      "medianBatchMeanNsTrials": [
+        1650,
+        1671.875,
+        1693.75,
+        1687.5,
+        1650
+      ],
+      "projectedCorePercent48000": 0.0078369140625,
+      "projectedCorePercent48000Trials": [
+        0.007734375,
+        0.0078369140625,
+        0.007939453125,
+        0.00791015625,
+        0.007734375
+      ],
+      "signature": 256
+    },
+    {
+      "case": "callback_planar_diagnostics",
+      "frames": 1024,
+      "instances": 1,
+      "backend": "avx512",
+      "medianBatchMeanNs": 190.625,
+      "medianBatchMeanNsTrials": [
+        187.5,
+        190.625,
+        193.75,
+        193.75,
+        187.5
+      ],
+      "projectedCorePercent48000": 0.0008935546875,
+      "projectedCorePercent48000Trials": [
+        0.00087890625,
+        0.0008935546875,
+        0.000908203125,
+        0.000908203125,
+        0.00087890625
+      ],
+      "signature": 256
+    },
+    {
+      "case": "callback_flat_diagnostics",
+      "frames": 1024,
+      "instances": 1,
+      "backend": "avx512",
+      "medianBatchMeanNs": 1706.25,
+      "medianBatchMeanNsTrials": [
+        1687.5,
+        1706.25,
+        1740.625,
+        1725,
+        1684.375
+      ],
+      "projectedCorePercent48000": 0.007998046875,
+      "projectedCorePercent48000Trials": [
+        0.00791015625,
+        0.007998046875,
+        0.0081591796875,
+        0.0080859375,
+        0.0078955078125
+      ],
+      "signature": 256
+    },
+    {
+      "case": "transport32_paused",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "automatic",
+      "medianBatchMeanNs": 3121.875,
+      "medianBatchMeanNsTrials": [
+        3081.25,
+        3121.875,
+        3184.375,
+        3143.75,
+        3090.625
+      ],
+      "projectedCorePercent48000": 0.0146337890625,
+      "projectedCorePercent48000Trials": [
+        0.014443359375,
+        0.0146337890625,
+        0.0149267578125,
+        0.014736328125,
+        0.0144873046875
+      ],
+      "signature": 0
+    },
+    {
+      "case": "transport32_playing",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "automatic",
+      "medianBatchMeanNs": 7037.5,
+      "medianBatchMeanNsTrials": [
+        7025,
+        7037.5,
+        7171.875,
+        7165.625,
+        6962.5
+      ],
+      "projectedCorePercent48000": 0.03298828125,
+      "projectedCorePercent48000Trials": [
+        0.0329296875,
+        0.03298828125,
+        0.0336181640625,
+        0.0335888671875,
+        0.03263671875
+      ],
+      "signature": 170.846122562885
+    },
+    {
+      "case": "dsp16_compressor",
+      "frames": 1024,
+      "instances": 16,
+      "backend": "public_dsp",
+      "medianBatchMeanNs": 1025281.25,
+      "medianBatchMeanNsTrials": [
+        1010400,
+        1025281.25,
+        1036462.5,
+        1038406.25,
+        1012581.25
+      ],
+      "projectedCorePercent48000": 4.806005859375,
+      "projectedCorePercent48000Trials": [
+        4.73625,
+        4.806005859375,
+        4.85841796875,
+        4.867529296875,
+        4.746474609375
+      ],
+      "signature": 5.12212787941098
+    },
+    {
+      "case": "dsp16_compressor_chorus_reverb",
+      "frames": 1024,
+      "instances": 16,
+      "backend": "public_dsp",
+      "medianBatchMeanNs": 1744025,
+      "medianBatchMeanNsTrials": [
+        1735059.375,
+        1744025,
+        1799618.75,
+        1764071.875,
+        1723156.25
+      ],
+      "projectedCorePercent48000": 8.1751171875,
+      "projectedCorePercent48000Trials": [
+        8.1330908203125,
+        8.1751171875,
+        8.435712890625,
+        8.2690869140625,
+        8.077294921875
+      ],
+      "signature": 11.1849340052449
+    },
+    {
+      "case": "synth8x8_oscillator",
+      "frames": 1024,
+      "instances": 8,
+      "backend": "automatic",
+      "medianBatchMeanNs": 373868.75,
+      "medianBatchMeanNsTrials": [
+        370815.625,
+        373868.75,
+        376871.875,
+        376140.625,
+        370153.125
+      ],
+      "projectedCorePercent48000": 1.752509765625,
+      "projectedCorePercent48000Trials": [
+        1.7381982421875,
+        1.752509765625,
+        1.7665869140625,
+        1.7631591796875,
+        1.7350927734375
+      ],
+      "signature": 12.8154415860772
+    },
+    {
+      "case": "vst3_fixture8_process",
+      "frames": 1024,
+      "instances": 8,
+      "backend": "fixture",
+      "medianBatchMeanNs": 20987.5,
+      "medianBatchMeanNsTrials": [
+        20987.5,
+        21315.625,
+        21000,
+        20981.25,
+        20959.375
+      ],
+      "projectedCorePercent48000": 0.09837890625,
+      "projectedCorePercent48000Trials": [
+        0.09837890625,
+        0.0999169921875,
+        0.0984375,
+        0.098349609375,
+        0.0982470703125
+      ],
+      "signature": 2.66947066504508
+    },
+    {
+      "case": "vst3_fixture8_control_pump",
+      "frames": 1024,
+      "instances": 8,
+      "backend": "fixture",
+      "medianBatchMeanNs": 93.75,
+      "medianBatchMeanNsTrials": [
+        93.75,
+        106.25,
+        93.75,
+        93.75,
+        93.75
+      ],
+      "projectedCorePercent48000": 0.000439453125,
+      "projectedCorePercent48000Trials": [
+        0.000439453125,
+        0.000498046875,
+        0.000439453125,
+        0.000439453125,
+        0.000439453125
+      ],
+      "signature": 0
+    },
+    {
+      "case": "core_worker8_idle",
+      "instances": 8,
+      "frames": 1024,
+      "parentCorePercent": 0,
+      "parentCorePercentTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "workersCorePercent": 0,
+      "workersCorePercentTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "medianCallNs": 0,
+      "medianCallNsTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "p95CallNs": 0,
+      "p95CallNsTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "minimumDriverPeriodNs": 0,
+      "minimumDriverPeriodNsTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "maximumDriverPeriodNs": 0,
+      "maximumDriverPeriodNsTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "maximumDriverLatenessNs": 0,
+      "maximumDriverLatenessNsTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "missedTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "case": "core_worker8_poll60Hz",
+      "instances": 8,
+      "frames": 1024,
+      "parentCorePercent": 0,
+      "parentCorePercentTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "workersCorePercent": 0,
+      "workersCorePercentTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "medianCallNs": 9600,
+      "medianCallNsTrials": [
+        10100,
+        9600,
+        9500,
+        9300,
+        9900
+      ],
+      "p95CallNs": 13700,
+      "p95CallNsTrials": [
+        17000,
+        13900,
+        13700,
+        13700,
+        12600
+      ],
+      "minimumDriverPeriodNs": 14698500,
+      "minimumDriverPeriodNsTrials": [
+        14698500,
+        14885300,
+        14667300,
+        14672700,
+        14852100
+      ],
+      "maximumDriverPeriodNs": 31949400,
+      "maximumDriverPeriodNsTrials": [
+        32015100,
+        31949400,
+        31481700,
+        32127800,
+        31619700
+      ],
+      "maximumDriverLatenessNs": 16072851,
+      "maximumDriverLatenessNsTrials": [
+        16230037,
+        16335339,
+        15903701,
+        15925063,
+        16072851
+      ],
+      "missedTrials": [
+        0,
+        0,
+        0,
+        0,
+        0
+      ]
+    },
+    {
+      "case": "core_worker8_paced46Hz",
+      "instances": 8,
+      "frames": 1024,
+      "parentCorePercent": 0,
+      "parentCorePercentTrials": [
+        0,
+        0,
+        0,
+        0.778688465358779,
+        0
+      ],
+      "workersCorePercent": 0,
+      "workersCorePercentTrials": [
+        0,
+        0,
+        0,
+        1.55737693071756,
+        0
+      ],
+      "medianCallNs": 37600,
+      "medianCallNsTrials": [
+        37100,
+        37600,
+        37400,
+        38300,
+        43300
+      ],
+      "p95CallNs": 60300,
+      "p95CallNsTrials": [
+        58500,
+        60300,
+        58900,
+        67000,
+        78700
+      ],
+      "minimumDriverPeriodNs": 14979200,
+      "minimumDriverPeriodNsTrials": [
+        14651300,
+        14646900,
+        15019100,
+        15006000,
+        14979200
+      ],
+      "maximumDriverPeriodNs": 32134200,
+      "maximumDriverPeriodNsTrials": [
+        32143900,
+        32134200,
+        32126800,
+        32134500,
+        32121900
+      ],
+      "maximumDriverLatenessNs": 16130752,
+      "maximumDriverLatenessNsTrials": [
+        16437055,
+        15621473,
+        15658436,
+        16130752,
+        16348491
+      ],
+      "missedTrials": [
+        222,
+        223,
+        230,
+        252,
+        274
+      ]
+    },
+    {
+      "case": "daw_header_mix32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "application_default",
+      "medianBatchMeanNs": 1237.5,
+      "medianBatchMeanNsTrials": [
+        1237.5,
+        1221.875,
+        1265.625,
+        1268.75,
+        1234.375
+      ],
+      "projectedCorePercent48000": 0.04640625,
+      "projectedCorePercent48000Trials": [
+        0.04640625,
+        0.0458203125,
+        0.0474609375,
+        0.047578125,
+        0.0462890625
+      ],
+      "signature": 6.10418927203864
+    },
+    {
+      "case": "daw_header_rms32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "application_default",
+      "medianBatchMeanNs": 3468.75,
+      "medianBatchMeanNsTrials": [
+        3468.75,
+        3468.75,
+        3550,
+        3550,
+        3468.75
+      ],
+      "projectedCorePercent48000": 0.130078125,
+      "projectedCorePercent48000Trials": [
+        0.130078125,
+        0.130078125,
+        0.133125,
+        0.133125,
+        0.130078125
+      ],
+      "signature": 5.62064695358276
+    },
+    {
+      "case": "daw_header_constant_gain32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "application_default",
+      "medianBatchMeanNs": 1262.5,
+      "medianBatchMeanNsTrials": [
+        1250,
+        1262.5,
+        1309.375,
+        1268.75,
+        1231.25
+      ],
+      "projectedCorePercent48000": 0.04734375,
+      "projectedCorePercent48000Trials": [
+        0.046875,
+        0.04734375,
+        0.0491015625,
+        0.047578125,
+        0.046171875
+      ],
+      "signature": 4.57814204855822
+    },
+    {
+      "case": "daw_header_mix32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 1012.5,
+      "medianBatchMeanNsTrials": [
+        1009.375,
+        1056.25,
+        1037.5,
+        1012.5,
+        996.875
+      ],
+      "projectedCorePercent48000": 0.03796875,
+      "projectedCorePercent48000Trials": [
+        0.0378515625,
+        0.039609375,
+        0.03890625,
+        0.03796875,
+        0.0373828125
+      ],
+      "signature": 6.10418927203864
+    },
+    {
+      "case": "daw_header_rms32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 428.125,
+      "medianBatchMeanNsTrials": [
+        428.125,
+        425,
+        440.625,
+        440.625,
+        428.125
+      ],
+      "projectedCorePercent48000": 0.0160546875,
+      "projectedCorePercent48000Trials": [
+        0.0160546875,
+        0.0159375,
+        0.0165234375,
+        0.0165234375,
+        0.0160546875
+      ],
+      "signature": 5.62064719200134
+    },
+    {
+      "case": "daw_header_constant_gain32",
+      "frames": 128,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 1743.75,
+      "medianBatchMeanNsTrials": [
+        1725,
+        1734.375,
+        1743.75,
+        1781.25,
+        1750
+      ],
+      "projectedCorePercent48000": 0.065390625,
+      "projectedCorePercent48000Trials": [
+        0.0646875,
+        0.0650390625,
+        0.065390625,
+        0.066796875,
+        0.065625
+      ],
+      "signature": 4.57814204855822
+    },
+    {
+      "case": "daw_header_mix32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "application_default",
+      "medianBatchMeanNs": 3965.625,
+      "medianBatchMeanNsTrials": [
+        3928.125,
+        3965.625,
+        4012.5,
+        4006.25,
+        3925
+      ],
+      "projectedCorePercent48000": 0.0185888671875,
+      "projectedCorePercent48000Trials": [
+        0.0184130859375,
+        0.0185888671875,
+        0.01880859375,
+        0.018779296875,
+        0.0183984375
+      ],
+      "signature": 3.3188981278654
+    },
+    {
+      "case": "daw_header_rms32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "application_default",
+      "medianBatchMeanNs": 34893.75,
+      "medianBatchMeanNsTrials": [
+        34893.75,
+        34762.5,
+        35584.375,
+        35712.5,
+        34762.5
+      ],
+      "projectedCorePercent48000": 0.163564453125,
+      "projectedCorePercent48000Trials": [
+        0.163564453125,
+        0.16294921875,
+        0.1668017578125,
+        0.16740234375,
+        0.16294921875
+      ],
+      "signature": 5.66554045677185
+    },
+    {
+      "case": "daw_header_constant_gain32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "application_default",
+      "medianBatchMeanNs": 9471.875,
+      "medianBatchMeanNsTrials": [
+        9443.75,
+        9471.875,
+        9659.375,
+        9671.875,
+        9428.125
+      ],
+      "projectedCorePercent48000": 0.0443994140625,
+      "projectedCorePercent48000Trials": [
+        0.044267578125,
+        0.0443994140625,
+        0.0452783203125,
+        0.0453369140625,
+        0.0441943359375
+      ],
+      "signature": 2.48917305096984
+    },
+    {
+      "case": "daw_header_mix32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 2618.75,
+      "medianBatchMeanNsTrials": [
+        2603.125,
+        2612.5,
+        2662.5,
+        2690.625,
+        2618.75
+      ],
+      "projectedCorePercent48000": 0.012275390625,
+      "projectedCorePercent48000Trials": [
+        0.0122021484375,
+        0.01224609375,
+        0.01248046875,
+        0.0126123046875,
+        0.012275390625
+      ],
+      "signature": 3.3188981278654
+    },
+    {
+      "case": "daw_header_rms32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 1837.5,
+      "medianBatchMeanNsTrials": [
+        1784.375,
+        1768.75,
+        1837.5,
+        1850,
+        1915.625
+      ],
+      "projectedCorePercent48000": 0.00861328125,
+      "projectedCorePercent48000Trials": [
+        0.0083642578125,
+        0.008291015625,
+        0.00861328125,
+        0.008671875,
+        0.0089794921875
+      ],
+      "signature": 5.66553997993469
+    },
+    {
+      "case": "daw_header_constant_gain32",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "avx512",
+      "medianBatchMeanNs": 4525,
+      "medianBatchMeanNsTrials": [
+        4518.75,
+        4525,
+        4571.875,
+        4653.125,
+        4521.875
+      ],
+      "projectedCorePercent48000": 0.0212109375,
+      "projectedCorePercent48000Trials": [
+        0.021181640625,
+        0.0212109375,
+        0.0214306640625,
+        0.0218115234375,
+        0.0211962890625
+      ],
+      "signature": 2.48917305096984
+    }
+  ],
+  "executables": {
+    "core": "1ff4b4eab702b9e3061e613bcf40e17196213882011033b90a2e3fa34619b98a",
+    "workers": "65f91b5a880a0004a8bb5e34679b290dd821bbb2fe797a150eae8551b092a7d8",
+    "daw-buffer": "165fb7178760b965332fbd02cf703debf8e912b2d1104789209bb98544958672"
+  },
+  "backgroundDawCorePercent": [
+    0.0,
+    0.14513282556191037,
+    0.42613636363636365,
+    0.28900397669486244,
+    0.28900397669486244
+  ],
+  "workerCounterCaveat": "2-second GetProcessTimes windows do not resolve very small CPU usage; zero is not proof of zero cost",
+  "simulatedDriverCaveat": "Normal-priority sleep_until driver has large observed jitter; late blocks are retained, not an ASIO/xrun measurement",
+  "scope": "Isolated prepared paths and a read-only application buffer header; not a JUCE or whole-DAW comparison",
+  "postCollectionValidation": {
+    "compilerInputs": "63064bc05933d9b06cb59b60b5990892d50dd96d2f4d5b5537d5c2c8407d0d04",
+    "change": "Opt-in AddressSanitizer compile/link flags added to the two measurement targets after timing; measured C++ sources unchanged",
+    "releaseExecutablesStillMatch": true,
+    "applicationHeadersStillMatch": true,
+    "dependencyInputsStillMatch": true,
+    "sanitizedCoreRegressionsAndProbesPassed": true,
+    "subsequentConcurrentTimingRelaunch": "Stopped after rejected attempts; no additional trial accepted or included"
+  }
+}

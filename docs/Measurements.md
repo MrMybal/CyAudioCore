@@ -1,4 +1,10 @@
-# Synthesis measurements
+# Measurements
+
+See [isolated service path profiling](CorePathProfiling.fr.md) for the subsequent
+Windows campaign covering buffers, callback adaptation, transports, DSP, synthesis,
+plugin calls and worker accounting, with a read-only application header probe.
+
+## Synthesis measurements
 
 The synthesis measurement target is `CYAUDIOCORE_BUILD_MEASUREMENTS`, disabled by
 default. `scripts/run_native.py --measure` explicitly runs oscillator and wavetable
