@@ -17,3 +17,7 @@ See [migration](Migration.fr.md), [plugins](Plugins.md), [MIDI2](Midi2.md),
 [coverage](Coverage.md), [licensing](Licensing.md) and [validation](Validation.md).
 
 Devices supports miniaudio by default and opt-in static PortAudio behind the same public API. See [audio providers](PortAudio.fr.md).
+
+The expanded CyDSP processors compose with these services through the same public
+buffers and targets. See the [integration guide](CyDSPExpansion.fr.md) for multibus
+callbacks, sidechains, analysis, granular/custom voices, spatial channels and lifetimes.

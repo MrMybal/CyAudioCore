@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
-from reporting import source_digest
+from reporting import source_digest, dependency_fingerprint
 import platform
 import subprocess
 ROOT=Path(__file__).resolve().parents[1]
@@ -23,7 +23,7 @@ tag=a.arch+('-clang' if a.compiler=='clang' else '')+('-asan' if a.sanitize else
 folder=ROOT/'build'/('native-'+tag+('-ninja' if a.compiler=='clang' else ''))
 if a.build_dir: folder=a.build_dir.resolve()
 logs=ROOT/'build/native-logs';logs.mkdir(parents=True,exist_ok=True)
-report={'dependencySource':str(a.cydsp_source.resolve()),'sourceSha256':source_digest(),'compilerToolset':a.compiler,'timeUtc':datetime.now(timezone.utc).isoformat(),'architecture':a.arch,'addressSanitizer':a.sanitize,'system':platform.platform(),'status':'running'}
+report={'dependencySource':str(a.cydsp_source.resolve()),'dependency':dependency_fingerprint(a.cydsp_source),'sourceSha256':source_digest(),'compilerToolset':a.compiler,'timeUtc':datetime.now(timezone.utc).isoformat(),'architecture':a.arch,'addressSanitizer':a.sanitize,'system':platform.platform(),'status':'running'}
 try:
     import winreg
     with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE,r'HARDWARE\DESCRIPTION\System\CentralProcessor\0') as key:
@@ -68,6 +68,9 @@ try:
         report['dspRegressions']=run('dsp-regressions',[str(dependency_executable)])
     if a.measure:
         report['measurements']=run('measurements',[str(executable/'cyaudio_measurements.exe')],600)
+    report['inputsUnchanged']=(report['sourceSha256']==source_digest() and report['dependency']==dependency_fingerprint(a.cydsp_source))
+    if not report['inputsUnchanged']:
+        raise RuntimeError('Compiler inputs changed during validation; rerun against stable sources')
     report['status']='passed'
 except Exception as error:
     report['status']='failed';report['error']=str(error)

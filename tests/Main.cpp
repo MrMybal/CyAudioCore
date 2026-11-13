@@ -4,6 +4,7 @@
 void ciPropertyRegression(); void ciAdvancedRegression(); void dawMidiRegression();
 void midi2ProtocolRegression(); void dawRegression(); void midiProtocolRegression(); void instrumentRegression();
 void synthWavetableRegression();
+void dspCompositionRegression();
 #if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
 void audioProviderRegression();
 #if CYAUDIOCORE_WITH_PORTAUDIO
@@ -27,6 +28,7 @@ int main(int, char** argv) {
   ciPropertyRegression(); ciAdvancedRegression(); dawMidiRegression(); midi2ProtocolRegression();
   dawRegression(); midiProtocolRegression(); instrumentRegression();
   synthWavetableRegression();
+  dspCompositionRegression();
 #if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
   audioProviderRegression();
 #if CYAUDIOCORE_WITH_PORTAUDIO

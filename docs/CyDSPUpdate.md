@@ -1,5 +1,8 @@
 # CyDSP compatibility update — 2026-11-12
 
+The subsequent DSP expansion at `cc18dca` is covered by the
+[new integration guide](CyDSPExpansion.fr.md); this report records the earlier revision.
+
 Validated dependency: CyDSP 0.2.0, commit
 `6c48a3f8814c308e58e705707e7b9faf57b45777`. Its public API remains compatible with
 the existing package requirement. No dependency version bump or public CyAudioCore

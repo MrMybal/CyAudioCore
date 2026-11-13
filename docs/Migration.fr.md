@@ -10,6 +10,10 @@ Le synthétiseur CyAudioCore utilise désormais son oscillateur wavetable public
 blocs pour bénéficier de cette optimisation. Recompiler les archives liées ;
 voir [validation et adaptation](CyDSPUpdate.md) et [mesures](Measurements.md).
 
+L'extension suivante, CyDSP `cc18dca`, conserve les mêmes cibles et contrats de base.
+Les nouveaux processeurs s'utilisent directement sous `cydsp` avec les services
+CyAudioCore ; voir [raccordements, exemple et validation](CyDSPExpansion.fr.md).
+
 | Avant | Après |
 | --- | --- |
 | CyDSP::CyDSP, CyDSP::Stretch | Inchangés pour les traitements numériques |
