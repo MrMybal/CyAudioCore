@@ -6,6 +6,8 @@ Séparation des responsabilités DSP et services audio ; headers, namespaces et 
 
 ## Changements depuis l'import initial
 
+- Compatibilité avec CyDSP 0.3.2 : reconstruction des archives et contrôle du paquet installé avec sa version exacte ; couverture de la convolution via le transport et le graphe, avec blocs variables et buffers partagés. Voir la [référence courante](docs/CyDSPCurrent.fr.md).
+
 - Les fournisseurs publics de plugins isolent chaque instance et chaque scan ; contrôles CLAP et presets par IPC, mode même cycle sans attente et worker optionnel. Voir [configuration et migration](docs/PluginIsolation.fr.md).
 
 - CLAP devient le format principal : contrôles des extensions stables 1.2.10, configurations de ports, modulation polyphonique, presets, métadonnées et services applicatifs ; voir le [contrat et ses limites](docs/Clap.fr.md).

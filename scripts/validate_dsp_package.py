@@ -2,6 +2,7 @@
 import argparse
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,6 +19,9 @@ p.add_argument('--cmake', default=r'C:/Program Files/Microsoft Visual Studio/202
 a = p.parse_args()
 build = a.build_dir.resolve(strict=True)
 cache = (build/'CMakeCache.txt').read_text(encoding='utf-8')
+version_header = (a.cydsp_source/'include/cydsp/core/Version.h').read_text(encoding='utf-8')
+dependency_version = tuple(int(re.search(r'#define CYDSP_VERSION_'+part+r'\s+(\d+)', version_header)[1])
+                           for part in ('MAJOR', 'MINOR', 'PATCH'))
 portaudio = 'CYAUDIOCORE_WITH_PORTAUDIO:BOOL=ON' in cache
 tag = 'on' if portaudio else 'off'
 (ROOT/'build').mkdir(exist_ok=True)
@@ -27,6 +31,7 @@ source.mkdir()
 report = {'status': 'running', 'sourceSha256': source_digest(), 'dependency': dependency_fingerprint(a.cydsp_source),
           'currentDynamicsRequired': a.require_current_dynamics or a.require_prepared_optimizations,
           'preparedOptimizationsRequired': a.require_prepared_optimizations,
+          'expectedDependencyVersion': '.'.join(map(str, dependency_version)),
           'portAudio': portaudio, 'physicalDevices': False, 'folder': str(folder)}
 environment = {key.upper(): value for key, value in os.environ.items()}
 
@@ -45,6 +50,11 @@ find_package(CyAudioCore 0.1 CONFIG REQUIRED COMPONENTS Devices Files Sources Pl
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE CyAudioCore::CyAudioCore)
 ''', encoding='utf-8', newline='\n')
+with (source/'CMakeLists.txt').open('a', encoding='utf-8', newline='\n') as generated:
+    generated.write('find_package(CyDSP '+report['expectedDependencyVersion']+' EXACT CONFIG REQUIRED)\n')
+    generated.write('target_compile_definitions(consumer PRIVATE '+ ' '.join(
+        'EXPECT_CYDSP_VERSION_'+part+'='+str(value)
+        for part, value in zip(('MAJOR', 'MINOR', 'PATCH'), dependency_version))+')\n')
 if a.require_current_dynamics or a.require_prepared_optimizations:
     with (source/'CMakeLists.txt').open('a', encoding='utf-8', newline='\n') as generated:
         generated.write('target_compile_definitions(consumer PRIVATE EXPECT_CURRENT_DYNAMICS=1)\n')
@@ -57,6 +67,7 @@ if a.require_prepared_optimizations:
 #include <cydsp/synthesis/SourceBatch.h>
 #include <cydsp/analysis/LevelMeter.h>
 #include <cydsp/processors/Dynamics.h>
+#include <cydsp/processors/MatrixConvolver.h>
 #if defined(EXPECT_PREPARED_OPTIMIZATIONS)
 #include <cydsp/processors/AdvancedDynamics.h>
 #include <cydsp/processors/Biquad.h>
@@ -68,6 +79,9 @@ static_assert(std::is_same_v<cyaudio::AudioBlock<float>,cydsp::AudioBlock<float>
 static_assert(std::is_same_v<cyaudio::Status,cydsp::Status>);
 // Core requires the CyDSP 0.3 package; an older installed header fails here.
 static_assert(CYDSP_VERSION_MAJOR > 0 || CYDSP_VERSION_MINOR >= 3);
+static_assert(CYDSP_VERSION_MAJOR == EXPECT_CYDSP_VERSION_MAJOR &&
+              CYDSP_VERSION_MINOR == EXPECT_CYDSP_VERSION_MINOR &&
+              CYDSP_VERSION_PATCH == EXPECT_CYDSP_VERSION_PATCH);
 int main() {
     using cydsp::Status;
     cyaudio::AudioBuffer<float> input, output;
@@ -197,6 +211,17 @@ int main() {
     if (emptyPlugin.isolated() || emptyPlugin.submit(emptyProcess,ticket)!=Status::not_prepared ||
         emptyPlugin.collect(emptyProcess,ticket)!=Status::not_prepared || emptyPlugin.discard(ticket)!=Status::not_prepared) return 40;
     if (emptyPlugin.clapExtensions()!=nullptr) return 41;
+    // MatrixConvolver's private layout changed in 0.3.2: construct, process and
+    // destroy the installed type against its matching static archive.
+    cydsp::MatrixConvolver<float> convolution;
+    const cydsp::ConvolutionRoute<float> convolutionRoute{0,2,impulse};
+    cyaudio::AudioBuffer<float> convolved;
+    if (convolved.resize(3,8)!=Status::ok ||
+        convolution.prepare({48000,8,1},3,{&convolutionRoute,1},8,32)!=Status::ok ||
+        convolution.process(input.block(),convolved.block())!=Status::ok) return 42;
+    for (std::size_t ch=0;ch<3;++ch)
+        for (auto value:convolved.block().channel(ch))
+            if (value!=(ch==2?.25f:0.f)) return 43;
     return 0;
 }
 ''', encoding='utf-8', newline='\n')

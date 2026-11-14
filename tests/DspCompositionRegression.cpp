@@ -6,10 +6,11 @@
 #include <stdexcept>
 #include <type_traits>
 
-// Existing CyDSP 0.2 packages remain usable. These optional composition tests
-// exercise the expansion when its public headers are present.
+// Core requires CyDSP 0.3. Exercise its processors through the service buffers
+// and graph callback used by applications, without opening a physical device.
 #if __has_include(<cydsp/synthesis/SourceBatch.h>) && __has_include(<cydsp/control/Quality.h>)
 #include "../examples/DspGraphCallback.h"
+#include <cydsp/processors/MatrixConvolver.h>
 #if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
 #include "detail/AudioCallbackAdapter.h"
 #endif
@@ -91,6 +92,82 @@ template <Sample T> void sourcesAndAnalysis() {
     ok(status);
     require(output.block().channel(0)[0] == 0 && output.block().channel(0)[1] == 0 && output.block().channel(0)[2] != 0,
             "grain event offset survives shorter Core blocks");
+}
+
+template <Sample T> void transportConvolution() {
+    constexpr std::size_t sourceFrames = 257, renderedFrames = 512, capacity = 64;
+    AudioBuffer<T> data, capture, output;
+    ok(data.resize(3, sourceFrames)); ok(capture.resize(3, capacity + 4)); ok(output.resize(3, capacity + 4));
+    for (std::size_t ch = 0; ch < 3; ++ch)
+        for (std::size_t i = 0; i < sourceFrames; ++i)
+            data.block().channel(ch)[i] = T(int((i * 7 + ch * 3) % 19) - 9) / T(16);
+    MemoryAudioSource<T> source; ok(source.prepare(data.block(), 48000));
+    const std::array<std::size_t, 7> sizes{{64, 1, 17, 32, 63, 7, 16}};
+    std::array<T, 193> ir{}; ir[0] = T(.5); ir[17] = T(-.25); ir[127] = T(.125); ir[192] = T(.0625);
+    std::array<T, 64> cross{}; cross[0] = T(-.25); cross[63] = T(.125);
+    const std::array<cydsp::ConvolutionRoute<T>, 2> filters{{{0, 2, ir}, {2, 0, cross}}};
+    const std::array<cydsp::DspBus, 1> bus{{{1, 3}}};
+    for (unsigned mode = 0; mode < 4; ++mode) {
+        cydsp::ConvolutionConfig config;
+        config.earlyPartition = 16; config.latePartition = 64;
+        config.mode = mode == 0 ? cydsp::ConvolutionMode::hybrid : mode == 2 ?
+            cydsp::ConvolutionMode::scheduled : cydsp::ConvolutionMode::nonuniform;
+        config.spectralHead = mode == 3;
+        cydsp::MatrixConvolver<T> convolution, inPlace;
+        ok(convolution.prepare({48000, capacity, 3}, 3, filters, config));
+        ok(inPlace.prepare({48000, capacity, 3}, 3, filters, config));
+        const std::array<cydsp::DspNode<T>, 1> nodes{{{1, &convolution,
+            [](void* ptr, auto input, auto out) noexcept {
+                return static_cast<cydsp::MatrixConvolver<T>*>(ptr)->process(input[0], out[0]);
+            }, bus, bus, {}, [](void* ptr) noexcept { static_cast<cydsp::MatrixConvolver<T>*>(ptr)->reset(); }}}};
+        const std::array<cydsp::DspConnection, 2> routes{{
+            {cydsp::graphInputNode, 1, 1, 1, 1}, {1, 1, cydsp::graphOutputNode, 1, 1}}};
+        cydsp::MultiBusGraph<T> graph; ok(graph.prepare({48000, capacity, 3}, bus, bus, nodes, routes));
+        examples::DspGraphCallback<T> callback; ok(callback.prepare(graph));
+        AudioTransport<T> transport; ok(transport.prepare({48000, capacity, 3}, source));
+        require(callback.timing().latencyFrames == 0 && convolution.latencyFrames() == 0,
+                "convolution keeps zero added block latency through Core graph bridge");
+        for (unsigned pass = 0; pass < 2; ++pass) {
+            ok(transport.enqueue({TransportAction::seek, 0})); ok(transport.enqueue({TransportAction::play}));
+            audited([&]() noexcept { callback.reset(); inPlace.reset(); });
+            std::size_t first = 0, block = 0;
+            while (first < renderedFrames) {
+                const auto frames = std::min(sizes[block++ % sizes.size()], renderedFrames - first);
+                for (std::size_t ch = 0; ch < 3; ++ch) {
+                    std::fill(capture.block().channel(ch).begin(), capture.block().channel(ch).end(), T(99));
+                    std::fill(output.block().channel(ch).begin(), output.block().channel(ch).end(), T(99));
+                }
+                auto in = capture.block().subBlock(2, frames), out = output.block().subBlock(2, frames);
+                Status status{};
+                audited([&]() noexcept {
+                    status = transport.process(in);
+                    if (status == Status::ok) status = callback.process(in, out);
+                    if (status == Status::ok) status = inPlace.process(in, in);
+                });
+                ok(status);
+                auto sample = [&](std::size_t channel, std::size_t frame, std::size_t delay) {
+                    return frame >= delay && frame - delay < sourceFrames ?
+                        double(data.block().channel(channel)[frame - delay]) : 0.;
+                };
+                for (std::size_t ch = 0; ch < 3; ++ch) {
+                    for (std::size_t i = 0; i < frames; ++i) {
+                        const auto frame = first + i;
+                        const double expected = ch == 0 ? -.25 * sample(2, frame, 0) + .125 * sample(2, frame, 63) :
+                            ch == 2 ? .5 * sample(0, frame, 0) - .25 * sample(0, frame, 17) +
+                                .125 * sample(0, frame, 127) + .0625 * sample(0, frame, 192) : 0.;
+                        const auto tolerance = std::same_as<T, float> ? 3e-5 : 1e-10;
+                        require(std::abs(double(out.channel(ch)[i]) - expected) < tolerance &&
+                                std::abs(double(in.channel(ch)[i]) - expected) < tolerance,
+                                "transport EOF/tail -> sparse convolution, alias and disjoint views");
+                    }
+                    require(output.block().channel(ch)[1] == T(99) && output.block().channel(ch)[frames + 2] == T(99) &&
+                            capture.block().channel(ch)[1] == T(99) && capture.block().channel(ch)[frames + 2] == T(99),
+                            "convolution keeps Core sub-block guards");
+                }
+                first += frames;
+            }
+        }
+    }
 }
 
 template <Sample T> struct VoiceRenderer {
@@ -214,12 +291,13 @@ void deviceBuses() {
 } // namespace
 void dspCompositionRegression() {
     sourcesAndAnalysis<float>(); sourcesAndAnalysis<double>();
+    transportConvolution<float>(); transportConvolution<double>();
     customSynthVoice<float>(); customSynthVoice<double>();
     spatialWidth<float>(); spatialWidth<double>();
 #if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
     deviceBuses();
 #endif
-    std::cout << "PASS Core/DSP composition sources/grains/MIDI voices/64 channels/multibus sidechain/realtime\n";
+    std::cout << "PASS Core/DSP composition sources/convolution/grains/MIDI voices/64 channels/multibus sidechain/realtime\n";
 }
 #else
 void dspCompositionRegression() { std::cout << "SKIP optional DSP expansion composition: older public headers\n"; }
