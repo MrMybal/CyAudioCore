@@ -1,7 +1,7 @@
 #pragma once
 #include "cyaudio/core/DspTypes.h"
-#include "cydsp/core/AudioBlock.h"
 #include "cyaudio/midi/Ump.h"
+#include "cydsp/core/AudioBlock.h"
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -11,8 +11,20 @@ class ClapExtensions;
 struct ClapHostServices;
 namespace detail {
 struct PluginInstanceAccess; // Private door for the separate-process worker service.
-}
+struct PluginRemoteAccess;
+} // namespace detail
 enum class PluginFormat { clap, vst3, audioUnit, aax, lv2, jsfx, custom };
+enum class PluginScheduling { pipelined, sameCycle };
+// An explicit caller-owned worker executable must handle --cydsp-worker <mapping>.
+// No public built-in provider ever falls back to loading foreign code in the host.
+struct PluginIsolationOptions {
+    std::filesystem::path workerExecutable;
+    PluginScheduling scheduling = PluginScheduling::pipelined;
+    std::uint32_t maximumFrames = 8192, maximumEvents = 4096, maximumChannelsPerDirection = 64,
+                  maximumPayloadBytes = 65536, maximumStateBytes = 16 * 1024 * 1024;
+    unsigned startupTimeoutMs = 5000, controlTimeoutMs = 2000, heartbeatTimeoutMs = 3000;
+    bool clapThreadPool = false; // Optional worker-local serial CLAP task executor.
+};
 enum class PluginWindowApi { win32, cocoa, x11, wayland, unspecified }; // CLAP floating API.
 struct PluginWindow {
     PluginWindowApi api = PluginWindowApi::win32;
@@ -229,11 +241,35 @@ struct PluginHostCallbacks {
 // Original provider boundary for separately supplied licensed/native formats.
 // Control/UI functions run on the creating UI thread; start/stop/reset/process
 // share a single serialized symbolic audio thread. The application owns handoff.
-// A backend is in-process; crash isolation requires the separate worker service.
+// Built-in providers always return isolated backends. A custom adopted backend
+// is trusted application code and executes in its caller process.
 class PluginBackend {
   public:
     virtual ~PluginBackend() = default;
-    virtual ClapExtensions* clapExtensions() noexcept { return nullptr; }
+    virtual Status status() const noexcept {
+        return Status::ok;
+    }
+    virtual bool isolated() const noexcept {
+        return false;
+    }
+    virtual Status submit(const PluginProcess<float>&, std::uint64_t&) noexcept {
+        return Status::unsupported_format;
+    }
+    virtual Status submit(const PluginProcess<double>&, std::uint64_t&) noexcept {
+        return Status::unsupported_format;
+    }
+    virtual Status collect(const PluginProcess<float>&, std::uint64_t) noexcept {
+        return Status::unsupported_format;
+    }
+    virtual Status collect(const PluginProcess<double>&, std::uint64_t) noexcept {
+        return Status::unsupported_format;
+    }
+    virtual Status discard(std::uint64_t) noexcept {
+        return Status::unsupported_format;
+    }
+    virtual ClapExtensions* clapExtensions() noexcept {
+        return nullptr;
+    }
     [[nodiscard]] virtual const PluginDescription& description() const noexcept = 0;
     virtual Status activate(const PluginPrepareOptions&) noexcept = 0;
     virtual Status deactivate() noexcept = 0;
@@ -299,19 +335,29 @@ class PluginInstance {
     ~PluginInstance();
     PluginInstance(PluginInstance&&) noexcept;
     PluginInstance& operator=(PluginInstance&&) noexcept;
+    // Trusted custom backends only; this is not a loader for foreign modules.
     static Status adopt(std::unique_ptr<PluginBackend>, PluginInstance&) noexcept;
     const PluginDescription* description() const noexcept;
     PluginLifecycle lifecycle() const noexcept;
     ClapExtensions* clapExtensions() noexcept;
+    bool isolated() const noexcept;
     Status activate(const PluginPrepareOptions& = {}) noexcept;
     Status start() noexcept;
     Status process(const PluginProcess<float>&) noexcept;
     Status process(const PluginProcess<double>&) noexcept;
+    // sameCycle only. Each call is bounded and never waits. collect() may be retried
+    // while useful independent work is available; discard() closes a missed cycle.
+    Status submit(const PluginProcess<float>&, std::uint64_t& ticket) noexcept;
+    Status submit(const PluginProcess<double>&, std::uint64_t& ticket) noexcept;
+    Status collect(const PluginProcess<float>&, std::uint64_t ticket) noexcept;
+    Status collect(const PluginProcess<double>&, std::uint64_t ticket) noexcept;
+    Status discard(std::uint64_t ticket) noexcept;
     Status stop() noexcept;
     Status reset() noexcept;
     Status deactivate() noexcept;
     Status refresh() noexcept; // Inactive; refreshes ports/parameters after restart/rescan.
-    Status parameterValue(std::uint32_t, double&) noexcept; // Main; CLAP also allows while processing.
+    Status parameterValue(std::uint32_t,
+                          double&) noexcept; // Main; CLAP also allows while processing.
     Status parameterText(std::uint32_t, double, std::string&) noexcept;
     Status flush(const PluginEventBuffer&, PluginEventBuffer&) noexcept; // Inactive main only.
     // Active CLAP flush: serialized audio owner, never concurrently with process().
@@ -334,7 +380,9 @@ class PluginInstance {
     friend struct detail::PluginInstanceAccess;
     struct State;
     std::unique_ptr<State> state_;
-    template <Sample T> Status processImpl(const PluginProcess<T>&) noexcept;
+    template <Sample T>
+    Status processImpl(const PluginProcess<T>&, unsigned operation = 0,
+                       std::uint64_t* ticket = nullptr) noexcept;
 };
 class PluginProvider {
   public:
@@ -344,9 +392,11 @@ class PluginProvider {
                           const PluginHostCallbacks&, PluginInstance&) noexcept = 0;
 };
 // Creates an actual built-in adapter when compiled/supported. Never substitutes formats.
-Status createPluginProvider(PluginFormat, std::unique_ptr<PluginProvider>&) noexcept;
+Status createPluginProvider(PluginFormat, std::unique_ptr<PluginProvider>&,
+                            const PluginIsolationOptions& = {}) noexcept;
 // CLAP is the primary format; other formats remain explicit choices.
-inline Status createPluginProvider(std::unique_ptr<PluginProvider>& result) noexcept {
-    return createPluginProvider(PluginFormat::clap, result);
+inline Status createPluginProvider(std::unique_ptr<PluginProvider>& result,
+                                   const PluginIsolationOptions& isolation = {}) noexcept {
+    return createPluginProvider(PluginFormat::clap, result, isolation);
 }
 } // namespace cyaudio

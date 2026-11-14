@@ -1,3 +1,4 @@
+#include "../src/plugins/PluginInternal.h"
 #include <algorithm>
 #include <array>
 #include <cyaudio/CyAudioCore.h>
@@ -139,7 +140,7 @@ void pluginRegression(const std::filesystem::path& directory) {
     using namespace cydsp;
 using namespace cyaudio;
     std::unique_ptr<PluginProvider> provider;
-    ok(createPluginProvider(PluginFormat::clap, provider));
+    ok(cyaudio::detail::createInProcessPluginProvider(PluginFormat::clap, provider));
     std::vector<PluginDescriptor> descriptors;
     const auto path = std::filesystem::absolute(directory / "cydsp_fixture.clap");
     ok(provider->scan(path, descriptors));
@@ -233,7 +234,7 @@ void vstPluginRegression(const std::filesystem::path& directory) {
     using namespace cydsp;
 using namespace cyaudio;
     std::unique_ptr<PluginProvider> provider;
-    ok(createPluginProvider(PluginFormat::vst3, provider));
+    ok(cyaudio::detail::createInProcessPluginProvider(PluginFormat::vst3, provider));
     const auto path = std::filesystem::absolute(directory / "cydsp_vst_fixture.vst3");
     std::vector<PluginDescriptor> list;
     ok(provider->scan(path, list));

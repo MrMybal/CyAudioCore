@@ -1,15 +1,16 @@
 #pragma once
-#include "cyaudio/core/DspTypes.h"
 #include "PluginInternal.h"
+#include "cyaudio/core/DspTypes.h"
 #include "cyaudio/plugins/PluginWorker.h"
 #include <array>
 #include <atomic>
 #include <cstring>
 namespace cyaudio::detail::wire {
 inline constexpr std::uint64_t magic = 0x3150434950534443ull;
-// Version 2: audio wake-up flag/word, control wake word, seqlocked plugin timing and
-// the restart command. Mismatched client/worker binaries refuse to pair.
-inline constexpr std::uint32_t version = 2;
+// Version 3: isolated discovery/hosting, bounded portable controls, reverse UI
+// calls, variable-frame split-phase audio and asynchronous audio-owner commands.
+// Mismatched client/worker binaries refuse to pair.
+inline constexpr std::uint32_t version = 3;
 enum class Command : std::uint32_t {
     save = 1,
     load,
@@ -21,7 +22,8 @@ enum class Command : std::uint32_t {
     focusEditor,
     keyEditor,
     wheelEditor,
-    restart
+    restart,
+    remote
 };
 struct Transport {
     std::int64_t songFrame = 0;
@@ -110,6 +112,16 @@ struct Header {
     std::uint32_t inputEvents = 0, inputBytes = 0, outputEvents = 0, outputBytes = 0,
                   audioStatus = 0, hasTransport = 0;
     Transport transport;
+    std::uint32_t blockFrames = 0, audioOperation = 0;
+    std::atomic<std::uint32_t> clientAudioCommand{0}, clientReset{0}, clientAudioStatus{0};
+    std::atomic<std::uint32_t> clapProcessStatus{1};
+    std::uint32_t audioPortInput = 0, audioPortIndex = 0, audioPortActive = 0, audioPortBits = 0;
+    std::atomic<std::uint32_t> audioPortState{0}, audioPortStatus{0};
+    std::uint32_t bootMode = 0, initialBytes = 0, reverseTimeoutMs = 2000;
+    std::array<std::byte, 128> reverseSeparation{};
+    std::atomic<std::uint32_t> reverseState{0};
+    std::uint32_t reverseBytes = 0, reverseStatus = 0;
+    std::array<std::uint8_t, 65536> reversePayload{};
     std::array<std::byte, 128> controlSeparation{};
     std::atomic<std::uint32_t> controlState{0}, controlWake{0};
     std::uint32_t command = 0, controlStatus = 0, controlBytes = 0, windowApi = 0, floating = 0,
@@ -162,7 +174,8 @@ inline bool valid(const Header& h) noexcept {
         h.sampleRate <= 0 || h.sampleRate > 1000000 || !h.minimumFrames ||
         h.minimumFrames > h.frames || !h.frames || h.frames > 65536 || !h.events ||
         h.events > 65536 || !h.channels || h.channels > 256 || h.payload > 16 * 1024 * 1024 ||
-        !h.stateBytes || h.stateBytes > 64 * 1024 * 1024 || h.flags > 3)
+        !h.stateBytes || h.stateBytes > 64 * 1024 * 1024 || h.flags > 3 || h.bootMode > 3 ||
+        h.initialBytes > h.stateBytes || !h.reverseTimeoutMs || h.reverseTimeoutMs > 60000)
         return false;
     return layout(h).total == h.mappingBytes && h.mappingBytes <= 512 * 1024 * 1024;
 }
@@ -174,11 +187,13 @@ inline bool sameConfiguration(const Header& shared, const Header& configured) no
            shared.protocol == configured.protocol && shared.wordBits == configured.wordBits &&
            shared.headerBytes == configured.headerBytes &&
            shared.eventBytes == configured.eventBytes && shared.format == configured.format &&
-           shared.minimumFrames == configured.minimumFrames &&
-           shared.frames == configured.frames && shared.events == configured.events &&
-           shared.channels == configured.channels && shared.payload == configured.payload &&
-           shared.stateBytes == configured.stateBytes && shared.flags == configured.flags &&
-           shared.parentPid == configured.parentPid && shared.sampleRate == configured.sampleRate;
+           shared.minimumFrames == configured.minimumFrames && shared.frames == configured.frames &&
+           shared.events == configured.events && shared.channels == configured.channels &&
+           shared.payload == configured.payload && shared.stateBytes == configured.stateBytes &&
+           shared.flags == configured.flags && shared.parentPid == configured.parentPid &&
+           shared.sampleRate == configured.sampleRate && shared.bootMode == configured.bootMode &&
+           shared.initialBytes == configured.initialBytes &&
+           shared.reverseTimeoutMs == configured.reverseTimeoutMs;
 }
 inline Status writeEvents(const PluginEventBuffer* in, Event* records, std::uint8_t* payload,
                           std::uint32_t maximumEvents, std::uint32_t maximumBytes,
@@ -241,7 +256,8 @@ inline Status readEvents(const Event* records, const std::uint8_t* payload, std:
         p.channel = std::int16_t(e.channel);
         p.key = std::int16_t(e.key);
         p.value = e.value;
-        p.bytes = {payload + e.offset, e.size};
+        if (e.size)
+            p.bytes = {payload + e.offset, e.size};
         p.packet.words = e.words;
         p.packet.count = std::uint8_t(e.wordCount);
         p.time = decode(e.transport);

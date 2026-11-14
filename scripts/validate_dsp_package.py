@@ -187,9 +187,16 @@ int main() {
     cyaudio::ClapPresetDiscovery discovery;
     if (discovery.catalogue()!=nullptr) return 37;
     std::unique_ptr<cyaudio::PluginProvider> clap;
-    if (cyaudio::createPluginProvider(clap)!=Status::ok || !clap) return 38;
+    if (cyaudio::createPluginProvider(clap)!=Status::invalid_argument || clap) return 38;
+    cyaudio::PluginIsolationOptions isolated;
+    isolated.workerExecutable=std::filesystem::absolute("cyaudio-worker");
+    if (cyaudio::createPluginProvider(clap,isolated)!=Status::ok || !clap) return 39;
     cyaudio::PluginInstance emptyPlugin;
-    if (emptyPlugin.clapExtensions()!=nullptr) return 39;
+    cyaudio::PluginProcess<float> emptyProcess;
+    std::uint64_t ticket=0;
+    if (emptyPlugin.isolated() || emptyPlugin.submit(emptyProcess,ticket)!=Status::not_prepared ||
+        emptyPlugin.collect(emptyProcess,ticket)!=Status::not_prepared || emptyPlugin.discard(ticket)!=Status::not_prepared) return 40;
+    if (emptyPlugin.clapExtensions()!=nullptr) return 41;
     return 0;
 }
 ''', encoding='utf-8', newline='\n')

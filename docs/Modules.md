@@ -10,7 +10,8 @@
 | CyAudioCore::Plugins | CLAP/VST3/LV2/JSFX hosts, native editor contract and separate-process workers |
 
 Every target consumes public CyDSP declarations. The application chooses its UI,
-thread scheduling, plugin isolation policy and filesystem/device access.
+thread scheduling and filesystem/device access. Built-in plugin providers require
+a worker and isolate discovery and instances; see [isolation](PluginIsolation.fr.md).
 
 CLAP is the primary plugin format. See the [stable extension matrix and examples](Clap.fr.md).
 

@@ -1,3 +1,6 @@
+#if defined(_MSC_VER)
+#define _CRT_SECURE_NO_WARNINGS
+#endif
 // Original MIT fixture. CLAP declarations: third_party/licenses/clap.txt
 #include <algorithm>
 #include <array>
@@ -385,12 +388,20 @@ const clap_plugin_factory_t factory{[](const clap_plugin_factory_t*) noexcept { 
                                        const char* id) noexcept -> const clap_plugin_t* {
                                         if (!id || std::strcmp(id, descriptor.id))
                                             return nullptr;
+                                        const auto* mode=std::getenv("CYAUDIO_TEST_ISOLATION");
+                                        if(mode && std::strcmp(mode,"create-exit")==0)std::_Exit(72);
                                         auto* f = new (std::nothrow) Fixture(host);
                                         return f ? &f->plugin : nullptr;
                                     }};
 } // namespace
 extern "C" CLAP_EXPORT const clap_plugin_entry_t clap_entry{
-    CLAP_VERSION, [](const char*) noexcept { return true; }, []() noexcept {},
+    CLAP_VERSION, [](const char*) noexcept {
+        // Controlled isolation regression, inherited only by the disposable child.
+        const auto* mode=std::getenv("CYAUDIO_TEST_ISOLATION");
+        if(mode && std::strcmp(mode,"scan-exit")==0)std::_Exit(71);
+        if(mode && std::strcmp(mode,"scan-stall")==0)std::this_thread::sleep_for(std::chrono::seconds(2));
+        return true;
+    }, []() noexcept {},
     [](const char* id) noexcept -> const void* {
         return id && std::strcmp(id, CLAP_PLUGIN_FACTORY_ID) == 0 ? &factory : nullptr;
     }};

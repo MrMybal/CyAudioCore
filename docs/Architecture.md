@@ -17,9 +17,12 @@ Codecs, platform ABI declarations and plugin runtimes remain private.
 Preparation, scanning, loading, file/device access, worker lifecycle and native
 editor operations run on control/UI threads. Prepared audio exchanges use bounded
 storage and ownership queues; foreign plugins/scripts retain their own behavior.
-The worker API preserves its single-plugin mailbox protocol and fixed one-block
-pipeline latency. Application-side grouping/scheduling and security sandboxing are
-separate responsibilities. See [migration](Migration.fr.md) and [plugins](Plugins.md).
+Built-in public plugin providers always use a separate process per instance and
+isolated disposable scanning. The pointer-free worker protocol is version 3.
+Pipelined processing retains one block; split-phase same-cycle processing exposes
+nonblocking submission, collection and deadline discard with variable block sizes.
+Application graph scheduling and OS privilege restriction remain separate work.
+See [mandatory isolation and scheduling](PluginIsolation.fr.md). See [migration](Migration.fr.md) and [plugins](Plugins.md).
 
 CLAP is the primary plugin format. Its stable advanced control interfaces are
 exposed through original portable types in ClapExtensions.h; the upstream C ABI

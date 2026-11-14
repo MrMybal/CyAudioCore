@@ -1,3 +1,4 @@
+#include "../src/plugins/PluginInternal.h"
 #include <cyaudio/CyAudioCore.h>
 #include "plugins/VstSupport.h"
 #include <array>
@@ -32,7 +33,7 @@ void vstStateRegression(const std::filesystem::path& directory) {
  streams();
  using namespace cyaudio;
  std::unique_ptr<PluginProvider> provider;
- require(createPluginProvider(PluginFormat::vst3,provider)==Status::ok);
+ require(cyaudio::detail::createInProcessPluginProvider(PluginFormat::vst3,provider)==Status::ok);
  const auto path=std::filesystem::absolute(directory/"cyaudio_state_fixture.vst3");
  std::vector<PluginDescriptor> descriptors; require(provider->scan(path,descriptors)==Status::ok && descriptors.size()==7);
  // Modes 0-4: controller getState variants. Mode 5: controller setComponentState answers

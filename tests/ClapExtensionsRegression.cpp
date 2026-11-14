@@ -1,3 +1,4 @@
+#include "../src/plugins/PluginInternal.h"
 #include "fixtures/ClapAdvancedContract.h"
 #include "plugins/PluginInternal.h"
 #include <algorithm>
@@ -236,6 +237,7 @@ void audio(PluginInstance& instance, ClapFixtureControl command, ClapFixtureRead
 } // namespace
 
 void clapExtensionsRegression(const std::filesystem::path& directory) {
+    cyaudio::detail::PluginWorkerScope trustedNativeFixtures;
     using namespace cyaudio;
     const auto path = std::filesystem::absolute(directory / "cyaudio_clap_advanced.clap");
     detail::SharedModule library;
@@ -245,7 +247,7 @@ void clapExtensionsRegression(const std::filesystem::path& directory) {
     require(read && command);
     command(ClapFixtureCommand::normal);
     std::unique_ptr<PluginProvider> provider;
-    ok(createPluginProvider(provider));
+    ok(cyaudio::detail::createInProcessPluginProvider(provider));
     std::vector<PluginDescriptor> plugins;
     require(provider->scan("relative.clap", plugins) == Status::invalid_argument);
     ok(provider->scan(path, plugins));

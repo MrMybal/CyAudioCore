@@ -21,7 +21,9 @@ extension de l'API 0.1 en développement.
 
 ```cpp
 std::unique_ptr<cyaudio::PluginProvider> provider;
-auto status = cyaudio::createPluginProvider(provider);
+cyaudio::PluginIsolationOptions isolation;
+isolation.workerExecutable = cheminAbsoluWorker;
+auto status = cyaudio::createPluginProvider(provider, isolation);
 if (status != cyaudio::Status::ok) return status;
 
 cyaudio::ClapHostServices services;
@@ -147,13 +149,16 @@ garde la responsabilité de son propre comportement temps réel.
 
 ## Worker et plateformes
 
-Le worker existant héberge toujours CLAP via le même adaptateur et conserve son
-protocole version 2 et son bloc de latence. Audio, événements core, états standards,
-GUI et demandes continuent de traverser ce protocole. L'interface avancée empruntée
-et les callbacks applicatifs locaux ne traversent pas le processus : les contrôles
-spécifiques de `ClapExtensions` sont actuellement utilisables en processus.
-Les changements de géométrie du worker exigent toujours une nouvelle instance de
-mailbox. La découverte en processus exécute du code étranger et n'est pas un sandbox.
+Les fournisseurs publics et la découverte de presets utilisent obligatoirement un
+worker explicitement configuré. Le protocole version 3 transporte aussi les contrôles
+stables de `ClapExtensions` et les notifications applicatives copiées. Les callbacks
+synchrones de menus utilisent un canal inverse borné ; les pointeurs locaux ne
+traversent pas le processus. Un exécuteur de tâches applicatif est refusé ; un
+exécuteur sériel local au worker est un choix explicite.
+
+Le mode à un bloc reste disponible. Le mode `sameCycle` expose `submit/collect/discard`
+sans attente et sans retard fixe de pipeline, avec gestion des échéances par le
+moteur. Voir [configuration, contrats et exemple](PluginIsolation.fr.md).
 
 Win32 natif est exécuté dans les tests. Les chemins Cocoa/X11 et le pompage POSIX
 exigent encore une acceptation sur leurs OS. Wayland intégré est refusé conformément

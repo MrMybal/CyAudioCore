@@ -6,6 +6,8 @@ Separate DSP and audio-service ownership, headers, namespaces and CMake targets.
 
 ## Changes since the initial import
 
+- Public plugin providers isolate every instance and scan; portable CLAP controls and preset discovery use IPC, with optional same-cycle scheduling and a dedicated worker executable. See [configuration and migration](docs/PluginIsolation.fr.md).
+
 - CLAP becomes the primary format: stable 1.2.10 extension controls, port configurations, polyphonic modulation, presets, metadata and application services; see the [contract and boundaries](docs/Clap.fr.md).
 
 - Requires CyDSP 0.3.0. The synthesizer renders envelopes and sampler voices through the CyDSP block forms `Adsr::process` and `SampleData::render`, with unchanged output; see [measurements](docs/Measurements.md).

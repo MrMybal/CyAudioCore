@@ -1,9 +1,12 @@
 // Explicit foreign-plugin acceptance tool. Never part of the automatic regression suite.
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cyaudio/plugins/ClapExtensions.h>
+#include <cyaudio/plugins/PluginWorker.h>
 #include <iostream>
 #include <stdexcept>
+#include <thread>
 
 namespace {
 using namespace cyaudio;
@@ -22,6 +25,8 @@ struct Instance {
 };
 } // namespace
 int main(int argc, char** argv) {
+    if (argc == 3 && std::string_view(argv[1]) == "--cydsp-worker")
+        return runPluginWorker(argv[2]);
     if (argc != 3) {
         std::cerr << "Usage: cyaudio_clap_acceptance <absolute-module> <plugin-id>\n";
         return 2;
@@ -31,7 +36,10 @@ int main(int argc, char** argv) {
             std::filesystem::path(std::u8string_view(reinterpret_cast<const char8_t*>(argv[1])));
         const std::string id(argv[2]);
         std::unique_ptr<PluginProvider> provider;
-        ok(createPluginProvider(provider));
+        PluginIsolationOptions isolation;
+        isolation.workerExecutable = std::filesystem::absolute(argv[0]);
+        isolation.scheduling = PluginScheduling::sameCycle;
+        ok(createPluginProvider(provider, isolation));
         std::vector<PluginDescriptor> descriptors;
         ok(provider->scan(path, descriptors));
         if (std::none_of(descriptors.begin(), descriptors.end(),
@@ -102,7 +110,17 @@ int main(int argc, char** argv) {
             transport.beats = double(steady) * 123 / (60 * options.sampleRate);
             transport.seconds = double(steady) / options.sampleRate;
             PluginProcess<float> call{ins, outs, frames, &events, &returned, &transport, steady};
-            ok(plugin.process(call));
+            std::uint64_t ticket = 0;
+            ok(plugin.submit(call, ticket));
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+            Status rendered;
+            do {
+                rendered = plugin.collect(call, ticket);
+                if (rendered == Status::would_block)
+                    std::this_thread::sleep_for(std::chrono::microseconds(100));
+            } while (rendered == Status::would_block &&
+                     std::chrono::steady_clock::now() < deadline);
+            ok(rendered);
             events.reset();
             steady += frames;
             for (const auto& bus : outs)

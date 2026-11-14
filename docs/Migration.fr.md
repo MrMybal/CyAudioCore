@@ -58,10 +58,13 @@ paramètres/gestes et événements sont gérés par les contrats publics existan
 L'application conserve sa boucle d'événements et ses responsabilités de thread UI.
 
 PluginWorker et runPluginWorker appartiennent à CyAudioCore::Plugins. L'application
-fournit son exécutable worker et choisit quelles instances isoler. Le protocole
-actuel représente une instance par worker ; il n'implémente pas un rack de plusieurs
-plugins dans un seul worker. L'audio utilise une boîte mémoire bornée sans attente,
-avec un bloc de latence supplémentaire et silence pour les réponses tardives.
+fournit un chemin absolu d'exécutable via PluginIsolationOptions : les fournisseurs
+publics isolent obligatoirement chaque instance et chaque scan. Sans configuration,
+la création du fournisseur renvoie invalid_argument. Le protocole version 3 représente
+une instance par worker ; il n'implémente pas un rack de plusieurs plugins dans un
+worker. Le mode pipelined ajoute un bloc ; sameCycle utilise submit/collect/discard
+sans retard fixe et laisse l'échéance à l'ordonnanceur. Les réponses tardives sont
+abandonnées. Voir [migration et exemples](PluginIsolation.fr.md).
 Ce mécanisme isole les plantages ; il n'est pas une sandbox contre du code hostile.
 
 ## Rapport CyDAW du 12 novembre 2026

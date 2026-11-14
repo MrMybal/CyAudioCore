@@ -3,7 +3,8 @@
 # Plugin hosting and native editors
 
 CLAP is the primary format. The default createPluginProvider overload selects it.
-See the [stable CLAP extension API, integration and limits](Clap.fr.md).
+See the [stable CLAP extension API, integration and limits](Clap.fr.md) and
+[mandatory process isolation and scheduling](PluginIsolation.fr.md).
 
 Link CyAudioCore::Plugins (CYAUDIOCORE_BUILD_PLUGINS, on by default). Production creates a static
 archive; fixture plugin modules and the fixture worker executable are built only
@@ -13,10 +14,10 @@ scanned or opened by the regression suite.
 ## Common original contract
 
 PluginProvider scans an explicitly selected module and creates a PluginInstance.
-The instance owns the backend; instances retain module initialization/factory
-ownership until the last reference is destroyed. Scanning/loading executes foreign
-code. Use the separate worker for processing isolation; an in-process scan is not
-isolated. Relative module paths are rejected. CLAP modules and VST3 binaries/bundles
+The built-in provider requires PluginIsolationOptions with an absolute worker
+executable path. Each scan uses a disposable child; each created instance owns a
+separate child with its backend/module/factory lifetime. CLAP preset discovery is
+also isolated. A missing/unavailable worker is an error, without local fallback. Relative module paths are rejected. CLAP modules and VST3 binaries/bundles
 use the platform loader; Windows dependency lookup uses the module directory and
 default trusted loader directories.
 
@@ -100,20 +101,23 @@ provider and returns unsupported_backend for this standalone worker.
 The protocol checks magic/version, native ABI/word size/record size, dimensions and
 all packet/payload bounds. It contains no cross-process C++ object or payload
 pointers. Client and worker must be built from the same protocol/target ABI
-(protocol version 2). The client keeps a private copy of the negotiated limits and
+(protocol version 3). The client keeps a private copy of the negotiated limits and
 never takes a bound from the shared header again, which the child can write.
 Memory is bounded by maximumChannelsPerDirection/events/payload/state bytes and
 an overall512 MiB limit. Only the child and owned mapping are cleaned up.
 The worker exits when shutdown is requested or its parent disappears.
 
-The audio client uses a nonblocking mailbox, prepared SIMD copies and a fixed
-block size equal to maximumFrames. It never waits, launches or allocates. Its only
+The audio client uses a nonblocking mailbox and prepared CyDSP copies. Pipelined
+process() uses a fixed block equal to the activated maximumFrames. sameCycle uses
+submit/collect/discard with variable sizes inside the prepared bounds and has no
+fixed pipeline delay. It never waits, launches or allocates. Its only
 system call is a non-blocking wake-up of the child's audio thread, made only while
 that thread sleeps. Invalid input events return their error without touching the
 outputs. An output event that cannot be translated is dropped and reported through
-pluginEventsDropped instead of failing the block. Pipeline latency is exactly one requested block when the child meets
-its deadline; add the reported plugin latency in the application's routing graph.
-The first block is silent. Missing/late replies produce silence/would_block;
+pluginEventsDropped instead of failing the block. In pipelined mode, latency is
+one requested block when the child meets its deadline and the first block is silent.
+PluginInstance::timing includes that pipeline when native latency is known;
+PluginWorkerInfo reports native timing and pipeline separately. Missing/late replies produce silence/would_block;
 stale replies are discarded, preserving timeline sequence. Inspect
 PluginWorkerBlockResult. poll on control detects an exited child (and a stalled heartbeat) and reports
 disconnected/timed_out. Relaunch and reload a saved state to recover. poll also
@@ -132,10 +136,9 @@ unsupported_backend. The worker forwards scale/show/focus/key/wheel where the
 format supports them. Plugin-initiated resize proposals are rejected synchronously,
 published as pluginEditorResize plus requestedEditorSize(), then decided by the
 parent UI; the host may request a supported constrained resize afterward.
-In-process editor callbacks support immediate acceptance. This is crash/lifetime
-isolation, not a security sandbox for malicious code. In-process scanning remains
-an explicit foreign-code operation; an isolated discovery/catalogue service is
-application work.
+The internal native adapter supports immediate editor acceptance inside the child.
+This is crash/lifetime isolation, not an OS security boundary for malicious code.
+Built-in public providers never scan/load foreign modules in the host process.
 
 ## Format availability and validation
 

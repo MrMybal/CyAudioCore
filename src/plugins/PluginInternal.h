@@ -5,6 +5,17 @@
 #include <thread>
 namespace cyaudio::detail {
 extern thread_local const PluginBackend* currentAudioPlugin;
+// Only the worker entry point and trusted native-adapter tests enter this scope.
+inline thread_local bool insidePluginWorker = false;
+struct PluginWorkerScope {
+    bool previous = insidePluginWorker;
+    PluginWorkerScope() noexcept {
+        insidePluginWorker = true;
+    }
+    ~PluginWorkerScope() {
+        insidePluginWorker = previous;
+    }
+};
 // An output event that cannot be translated or stored is dropped and counted on the
 // audio owner; it never fails the block. The UI owner reports pluginEventsDropped
 // from pumpMainThread whenever the count moved since its previous pump.
@@ -39,6 +50,10 @@ struct PluginInstanceAccess {
     static Status saveParked(PluginInstance&, std::vector<std::uint8_t>&,
                              std::size_t maximumBytes) noexcept;
 };
+Status createInProcessPluginProvider(PluginFormat, std::unique_ptr<PluginProvider>&) noexcept;
+inline Status createInProcessPluginProvider(std::unique_ptr<PluginProvider>& p) noexcept {
+    return createInProcessPluginProvider(PluginFormat::clap, p);
+}
 std::unique_ptr<PluginProvider> makeClapProvider();
 std::unique_ptr<PluginProvider> makeVst3Provider();
 std::unique_ptr<PluginProvider> makeLv2Provider();

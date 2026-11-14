@@ -1,5 +1,5 @@
-#include "cyaudio/core/DspTypes.h"
 #include "PluginInternal.h"
+#include "cyaudio/core/DspTypes.h"
 #include <algorithm>
 #include <atomic>
 #include <cstring>
@@ -123,6 +123,9 @@ Status PluginInstance::adopt(std::unique_ptr<PluginBackend> backend,
 const PluginDescription* PluginInstance::description() const noexcept {
     return state_ ? &state_->backend->description() : nullptr;
 }
+bool PluginInstance::isolated() const noexcept {
+    return state_ && state_->backend->isolated();
+}
 ClapExtensions* PluginInstance::clapExtensions() noexcept {
     return state_ ? state_->backend->clapExtensions() : nullptr;
 }
@@ -197,7 +200,9 @@ Status PluginInstance::start() noexcept {
         state_->phase.store(std::uint32_t(PluginLifecycle::processing), std::memory_order_release);
     return r;
 }
-template <Sample T> Status PluginInstance::processImpl(const PluginProcess<T>& p) noexcept {
+template <Sample T>
+Status PluginInstance::processImpl(const PluginProcess<T>& p, unsigned operation,
+                                   std::uint64_t* ticket) noexcept {
     if (!state_)
         return Status::not_prepared;
     if (lifecycle() != PluginLifecycle::processing)
@@ -283,7 +288,7 @@ template <Sample T> Status PluginInstance::processImpl(const PluginProcess<T>& p
             if (p.inputEvents->event(i)->frame >= p.frames)
                 return Status::invalid_argument;
     }
-    if (p.steadyFrame >= 0 && state_->minimumSteadyFrame >= 0 &&
+    if (operation != 2 && p.steadyFrame >= 0 && state_->minimumSteadyFrame >= 0 &&
         p.steadyFrame < state_->minimumSteadyFrame)
         return Status::invalid_argument;
     if (p.steadyFrame < -1 ||
@@ -294,8 +299,11 @@ template <Sample T> Status PluginInstance::processImpl(const PluginProcess<T>& p
     if (p.outputEvents)
         p.outputEvents->reset();
     detail::PluginAudioScope audio(state_->backend.get());
-    const auto r = state_->backend->process(p);
-    state_->minimumSteadyFrame = p.steadyFrame < 0 ? -1 : p.steadyFrame + p.frames;
+    const auto r = operation == 1   ? state_->backend->submit(p, *ticket)
+                   : operation == 2 ? state_->backend->collect(p, *ticket)
+                                    : state_->backend->process(p);
+    if (operation == 0 || (operation == 1 && r == Status::ok))
+        state_->minimumSteadyFrame = p.steadyFrame < 0 ? -1 : p.steadyFrame + p.frames;
     if (r != Status::ok) {
         for (const auto& bus : p.outputs)
             for (std::size_t ch = 0; ch < bus.channels(); ++ch)
@@ -310,6 +318,26 @@ Status PluginInstance::process(const PluginProcess<float>& p) noexcept {
 }
 Status PluginInstance::process(const PluginProcess<double>& p) noexcept {
     return processImpl(p);
+}
+Status PluginInstance::submit(const PluginProcess<float>& p, std::uint64_t& ticket) noexcept {
+    ticket = 0;
+    return processImpl(p, 1, &ticket);
+}
+Status PluginInstance::collect(const PluginProcess<float>& p, std::uint64_t ticket) noexcept {
+    return processImpl(p, 2, &ticket);
+}
+Status PluginInstance::submit(const PluginProcess<double>& p, std::uint64_t& ticket) noexcept {
+    ticket = 0;
+    return processImpl(p, 1, &ticket);
+}
+Status PluginInstance::collect(const PluginProcess<double>& p, std::uint64_t ticket) noexcept {
+    return processImpl(p, 2, &ticket);
+}
+Status PluginInstance::discard(std::uint64_t ticket) noexcept {
+    if (!state_ || lifecycle() != PluginLifecycle::processing)
+        return Status::not_prepared;
+    detail::PluginAudioScope audio(state_->backend.get());
+    return state_->backend->discard(ticket);
 }
 Status PluginInstance::stop() noexcept {
     if (!state_)
@@ -434,8 +462,7 @@ Status PluginInstance::openEditor(const PluginWindow& w, PluginEditorSize& size)
     if (!state_)
         return Status::not_prepared;
     if (!state_->onMain() || std::uint32_t(w.api) > std::uint32_t(PluginWindowApi::unspecified) ||
-        !isFinite(w.scale) || w.scale <= 0 || w.scale > 16 ||
-        (!w.floating && !w.handle))
+        !isFinite(w.scale) || w.scale <= 0 || w.scale > 16 || (!w.floating && !w.handle))
         return Status::invalid_argument;
     if (state_->editor)
         return Status::transition_in_progress;
@@ -504,7 +531,7 @@ Status PluginInstance::pumpMainThread(std::uint32_t& requests) noexcept {
         state_->editor = false;
     // Latency/tail queries follow each format's thread contract, outside process.
     state_->setTiming(state_->backend->timing());
-    return Status::ok;
+    return state_->backend->status();
 }
 Status PluginInstance::close() noexcept {
     if (!state_)
@@ -516,7 +543,8 @@ Status PluginInstance::close() noexcept {
     state_.reset();
     return Status::ok;
 }
-Status createPluginProvider(PluginFormat format, std::unique_ptr<PluginProvider>& result) noexcept {
+Status detail::createInProcessPluginProvider(PluginFormat format,
+                                             std::unique_ptr<PluginProvider>& result) noexcept {
     try {
         std::unique_ptr<PluginProvider> next;
         if (format == PluginFormat::clap)

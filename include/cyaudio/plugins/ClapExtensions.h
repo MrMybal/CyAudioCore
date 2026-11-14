@@ -246,9 +246,10 @@ class ClapPresetDiscovery {
     ~ClapPresetDiscovery();
     ClapPresetDiscovery(ClapPresetDiscovery&&) noexcept;
     ClapPresetDiscovery& operator=(ClapPresetDiscovery&&) noexcept;
-    static Status providers(const std::filesystem::path&,
-                            std::vector<ClapPresetProviderInfo>&) noexcept;
-    Status open(const std::filesystem::path&, std::string_view providerId) noexcept;
+    static Status providers(const std::filesystem::path&, std::vector<ClapPresetProviderInfo>&,
+                            const PluginIsolationOptions& = {}) noexcept;
+    Status open(const std::filesystem::path&, std::string_view providerId,
+                const PluginIsolationOptions& = {}) noexcept;
     const ClapPresetCatalogue* catalogue() const noexcept;
     Status metadata(ClapPresetLocationKind, std::string_view location,
                     std::vector<ClapPresetMetadata>&) noexcept;

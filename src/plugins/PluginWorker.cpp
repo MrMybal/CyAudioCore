@@ -1,5 +1,6 @@
-#include "cyaudio/core/DspTypes.h"
+#include "PluginRpc.h"
 #include "PluginWire.h"
+#include "cyaudio/core/DspTypes.h"
 #include "cydsp/math/VectorOps.h"
 #include <algorithm>
 #include <chrono>
@@ -74,6 +75,65 @@ struct PluginWorker::State {
     std::atomic<std::uint32_t> alive{1};
     std::uint64_t sequence = 0;
     bool previous = false;
+    std::uint64_t pending = 0;
+    std::uint32_t pendingFrames = 0;
+    bool flushPending = false;
+    PluginHostCallbacks callbacks;
+    ClapHostServices services;
+    // Reverse GUI RPCs execute trusted application callbacks only on the UI owner.
+    void reverse() noexcept {
+        std::uint32_t expected = 1;
+        if (!header->reverseState.compare_exchange_strong(expected, 3, std::memory_order_acq_rel))
+            return;
+        Status status = Status::invalid_argument;
+        try {
+            const auto n = header->reverseBytes;
+            if (n > header->reversePayload.size())
+                throw detail::rpc::Invalid{};
+            std::vector<std::uint8_t> input(header->reversePayload.begin(),
+                                            header->reversePayload.begin() + n);
+            detail::rpc::Reader reader(input);
+            std::uint32_t kind;
+            ClapMenuTarget target;
+            reader(kind, target);
+            detail::rpc::Writer writer;
+            bool result = false;
+            if (kind == 0) {
+                reader.done();
+                std::vector<ClapMenuItem> items;
+                result =
+                    services.populateMenu && services.populateMenu(services.context, target, items);
+                writer(result, items);
+            } else if (kind == 1) {
+                std::uint32_t action;
+                reader(action);
+                reader.done();
+                result =
+                    services.performMenu && services.performMenu(services.context, target, action);
+                writer(result);
+            } else if (kind == 2) {
+                std::int32_t screen, x, y;
+                reader(screen, x, y);
+                reader.done();
+                result = services.popupMenu &&
+                         services.popupMenu(services.context, target, screen, x, y);
+                writer(result);
+            } else
+                throw detail::rpc::Invalid{};
+            if (writer.bytes.size() > header->reversePayload.size())
+                throw detail::rpc::Invalid{};
+            std::copy(writer.bytes.begin(), writer.bytes.end(), header->reversePayload.begin());
+            header->reverseBytes = std::uint32_t(writer.bytes.size());
+            status = Status::ok;
+        } catch (const std::bad_alloc&) {
+            status = Status::allocation_failed;
+        } catch (...) {
+            status = Status::invalid_argument;
+        }
+        header->reverseStatus = std::uint32_t(status);
+        header->reverseState.store(2, std::memory_order_release);
+        controlWake.signal();
+    }
     std::uint32_t lastHeartbeat = 0;
     std::chrono::steady_clock::time_point heartbeatTime = std::chrono::steady_clock::now();
     ~State() {
@@ -147,18 +207,23 @@ struct PluginWorker::State {
         const auto deadline =
             std::chrono::steady_clock::now() + std::chrono::milliseconds(options.controlTimeoutMs);
         // Either wait can only expire on a stuck child, which is terminated.
-        while (header->audioState.load(std::memory_order_acquire) == 1) {
+        while (command != Command::remote &&
+               header->audioState.load(std::memory_order_acquire) == 1) {
             if (health() != Status::ok)
                 return Status::disconnected;
             if (std::chrono::steady_clock::now() >= deadline) {
                 abandon();
                 return Status::timed_out;
             }
+            reverse();
             pumpNativeMessages();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        previous = false;
-        header->audioState.store(0, std::memory_order_release);
+        if (command != Command::remote) {
+            previous = false;
+            pending = 0;
+            header->audioState.store(0, std::memory_order_release);
+        }
         header->command = std::uint32_t(command);
         header->controlState.store(1, std::memory_order_release);
         controlWake.signal();
@@ -169,6 +234,7 @@ struct PluginWorker::State {
                 abandon();
                 return Status::timed_out;
             }
+            reverse();
             pumpNativeMessages();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -186,22 +252,39 @@ PluginWorker& PluginWorker::operator=(PluginWorker&&) noexcept = default;
 Status PluginWorker::launch(const std::filesystem::path& executable, PluginFormat format,
                             const std::filesystem::path& plugin, std::string_view id,
                             const PluginWorkerOptions& options) noexcept {
-    if (!executable.is_absolute() || !plugin.is_absolute() || id.empty() || id.size() >= 4096 ||
-        id.find(char{}) != std::string_view::npos || !options.startupTimeoutMs ||
-        options.startupTimeoutMs > 60000 || !options.controlTimeoutMs ||
-        options.controlTimeoutMs > 60000 || !options.heartbeatTimeoutMs ||
-        options.heartbeatTimeoutMs > 60000)
+    return launchMode(executable, format, plugin, id, options, 0, {});
+}
+Status PluginWorker::launchMode(const std::filesystem::path& executable, PluginFormat format,
+                                const std::filesystem::path& plugin, std::string_view id,
+                                const PluginWorkerOptions& options, std::uint32_t mode,
+                                std::span<const std::uint8_t> initial,
+                                const PluginHostCallbacks* callbacks,
+                                const ClapHostServices* services) noexcept {
+    if (!executable.is_absolute() || !plugin.is_absolute() || (mode < 2 && id.empty()) ||
+        id.size() >= 4096 || id.find(char{}) != std::string_view::npos ||
+        !options.startupTimeoutMs || options.startupTimeoutMs > 60000 ||
+        !options.controlTimeoutMs || options.controlTimeoutMs > 60000 ||
+        !options.heartbeatTimeoutMs || options.heartbeatTimeoutMs > 60000)
         return Status::invalid_argument;
     try {
         Header configuration;
         configure(configuration, options, format);
-        if (!valid(configuration))
+        configuration.bootMode = mode;
+        configuration.initialBytes = std::uint32_t(initial.size());
+        configuration.reverseTimeoutMs = options.controlTimeoutMs;
+        if (initial.size() > configuration.stateBytes || mode > 3 ||
+            std::uint32_t(options.scheduling) > std::uint32_t(PluginScheduling::sameCycle) ||
+            !valid(configuration))
             return Status::invalid_spec;
         const auto path = plugin.u8string();
         if (path.empty() || path.size() >= configuration.pluginPath.size())
             return Status::invalid_argument;
         auto next = std::make_unique<State>();
         next->options = options;
+        if (callbacks)
+            next->callbacks = *callbacks;
+        if (services)
+            next->services = *services;
         next->offsets = layout(configuration);
         next->limits = limits(configuration);
         auto r = VectorOps::create(CpuBackend::automatic, next->ops);
@@ -218,6 +301,11 @@ Status PluginWorker::launch(const std::filesystem::path& executable, PluginForma
             return r;
         next->header = std::construct_at(reinterpret_cast<Header*>(next->mapping.data));
         configure(*next->header, options, format);
+        next->header->bootMode = mode;
+        next->header->initialBytes = configuration.initialBytes;
+        next->header->reverseTimeoutMs = options.controlTimeoutMs;
+        if (!initial.empty())
+            std::memcpy(next->mapping.data + next->offsets.control, initial.data(), initial.size());
         std::copy(path.begin(), path.end(), next->header->pluginPath.begin());
         std::copy(id.begin(), id.end(), next->header->pluginId.begin());
         r = next->audioWake.create(name, "-audio", next->header->audioWake);
@@ -236,6 +324,7 @@ Status PluginWorker::launch(const std::filesystem::path& executable, PluginForma
                 return Status::disconnected;
             if (std::chrono::steady_clock::now() >= deadline)
                 return Status::timed_out;
+            next->reverse();
             pumpNativeMessages();
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
@@ -252,14 +341,14 @@ Status PluginWorker::launch(const std::filesystem::path& executable, PluginForma
             return Status::invalid_argument;
         const auto inputCount = h.inputCount, outputCount = h.outputCount;
         const auto inputChannels = h.inputChannels, outputChannels = h.outputChannels;
-        if (!shape(inputCount, outputCount, inputChannels, outputChannels,
-                   configuration.channels))
+        if (!shape(inputCount, outputCount, inputChannels, outputChannels, configuration.channels))
             return Status::invalid_argument;
         next->info.inputChannels.assign(inputChannels.begin(), inputChannels.begin() + inputCount);
         next->info.outputChannels.assign(outputChannels.begin(),
                                          outputChannels.begin() + outputCount);
         next->refreshTiming();
-        next->info.pipelineLatencyFrames = configuration.frames;
+        next->info.pipelineLatencyFrames =
+            options.scheduling == PluginScheduling::pipelined ? configuration.frames : 0;
         next->info.protocolVersion = version;
         next->lastHeartbeat = h.heartbeat.load(std::memory_order_relaxed);
         next->heartbeatTime = std::chrono::steady_clock::now();
@@ -281,11 +370,13 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
     if (!state_)
         return Status::not_prepared;
     auto& s = *state_;
+    if (s.options.scheduling != PluginScheduling::pipelined)
+        return Status::invalid_argument;
     auto& h = *s.header;
     const auto& limit = s.limits;
-    if (p.frames != limit.frames)
+    if (p.frames != s.options.processing.maximumFrames)
         return Status::block_too_large;
-    if (std::same_as<T, double> != bool(limit.flags & 1))
+    if (std::same_as<T, double> != s.options.processing.useFloat64)
         return Status::unsupported_format;
     if (p.inputs.size() != s.info.inputChannels.size() ||
         p.outputs.size() != s.info.outputChannels.size())
@@ -310,7 +401,7 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
         std::size_t bytes = 0;
         for (std::size_t i = 0; i < p.inputEvents->size(); ++i) {
             const auto& e = *p.inputEvents->event(i);
-            if (e.frame >= limit.frames)
+            if (e.frame >= p.frames)
                 return Status::invalid_argument;
             bytes += e.bytes.size();
         }
@@ -363,7 +454,7 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
         for (const auto& bus : p.inputs)
             for (std::size_t ch = 0; ch < bus.channels(); ++ch) {
                 (void)s.ops.copy(bus.channel(ch).first(p.frames),
-                                 std::span<T>(audio + channel * limit.frames, limit.frames));
+                                 std::span<T>(audio + channel * limit.frames, p.frames));
                 ++channel;
             }
     }
@@ -372,18 +463,17 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
         std::size_t channel = 0;
         for (const auto& bus : p.outputs)
             for (std::size_t ch = 0; ch < bus.channels(); ++ch)
-                (void)s.ops.copy(
-                    std::span<const T>(audio + (channel++) * limit.frames, limit.frames),
-                    bus.channel(ch).first(p.frames));
+                (void)s.ops.copy(std::span<const T>(audio + (channel++) * limit.frames, p.frames),
+                                 bus.channel(ch).first(p.frames));
         // Events are decoded from a private copy of the payload, not from memory the
         // child can still rewrite.
         if (replyBytes)
             std::memcpy(s.payload.get(), s.mapping.data + s.offsets.outputPayload, replyBytes);
         auto& events = p.outputEvents ? *p.outputEvents : s.discardEvents;
-        received = readEvents(
-            reinterpret_cast<const Event*>(s.mapping.data + s.offsets.outputEvents),
-            s.payload.get(), replyEvents, replyBytes, limit.events, limit.payload, limit.frames,
-            events);
+        received =
+            readEvents(reinterpret_cast<const Event*>(s.mapping.data + s.offsets.outputEvents),
+                       s.payload.get(), replyEvents, replyBytes, limit.events, limit.payload,
+                       p.frames, events);
         if (received == Status::ok) {
             result.received = true;
             result.receivedSequence = sequence - 1;
@@ -393,6 +483,8 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
         silence(); // Only a block without a usable reply is cleared.
     result.missedDeadline = s.previous && !result.received;
     if (submit) {
+        h.blockFrames = p.frames;
+        h.audioOperation = 0;
         h.inputEvents = inputEvents;
         h.inputBytes = inputBytes;
         h.sequence = sequence;
@@ -417,6 +509,157 @@ Status PluginWorker::process(const PluginProcess<float>& p, PluginWorkerBlockRes
 Status PluginWorker::process(const PluginProcess<double>& p, PluginWorkerBlockResult& r) noexcept {
     return processImpl(p, r);
 }
+template <Sample T>
+Status PluginWorker::exchange(const PluginProcess<T>& p, std::uint64_t& ticket,
+                              bool submit) noexcept {
+    if (!state_)
+        return Status::not_prepared;
+    auto& s = *state_;
+    auto& h = *s.header;
+    const auto& limit = s.limits;
+    if (s.options.scheduling != PluginScheduling::sameCycle)
+        return Status::invalid_argument;
+    if (s.options.processing.useFloat64 != std::same_as<T, double>)
+        return Status::unsupported_format;
+    if (p.frames < s.options.processing.minimumFrames ||
+        p.frames > s.options.processing.maximumFrames)
+        return Status::block_too_large;
+    if (p.inputs.size() != s.info.inputChannels.size() ||
+        p.outputs.size() != s.info.outputChannels.size())
+        return Status::channel_mismatch;
+    for (std::size_t i = 0; i < p.inputs.size(); ++i)
+        if (!p.inputs[i].isValid() || p.inputs[i].channels() != s.info.inputChannels[i] ||
+            p.inputs[i].frames() < p.frames)
+            return Status::channel_mismatch;
+    for (std::size_t i = 0; i < p.outputs.size(); ++i)
+        if (!p.outputs[i].isValid() || p.outputs[i].channels() != s.info.outputChannels[i] ||
+            p.outputs[i].frames() < p.frames)
+            return Status::channel_mismatch;
+    if (p.inputEvents && p.inputEvents == p.outputEvents)
+        return Status::invalid_argument;
+    if (p.transport && !detail::validPluginTransport(*p.transport))
+        return Status::invalid_argument;
+    if (p.inputEvents) {
+        if (p.inputEvents->size() > limit.events)
+            return Status::block_too_large;
+        std::size_t bytes = 0;
+        for (std::size_t i = 0; i < p.inputEvents->size(); ++i) {
+            const auto& e = *p.inputEvents->event(i);
+            if (e.frame >= p.frames)
+                return Status::invalid_argument;
+            bytes += e.bytes.size();
+        }
+        if (bytes > limit.payload)
+            return Status::block_too_large;
+    }
+    const auto silence = [&] {
+        for (const auto& bus : p.outputs)
+            for (std::size_t ch = 0; ch < bus.channels(); ++ch)
+                s.ops.fill(bus.channel(ch).first(p.frames), T{});
+        if (p.outputEvents)
+            p.outputEvents->reset();
+    };
+    if (!s.alive.load(std::memory_order_acquire)) {
+        silence();
+        return Status::disconnected;
+    }
+    const auto state = h.audioState.load(std::memory_order_acquire);
+    if (submit) {
+        ticket = 0;
+        if (s.pending)
+            return Status::transition_in_progress;
+        if (state == 1) {
+            silence();
+            return Status::would_block;
+        }
+        // A discarded cycle may have completed since discard(): overwrite it only
+        // after observing ownership returned from the child.
+        std::uint32_t count = 0, bytes = 0;
+        const auto r = writeEvents(
+            p.inputEvents, reinterpret_cast<Event*>(s.mapping.data + s.offsets.inputEvents),
+            reinterpret_cast<std::uint8_t*>(s.mapping.data + s.offsets.inputPayload), limit.events,
+            limit.payload, count, bytes);
+        if (r != Status::ok)
+            return r;
+        auto* samples = reinterpret_cast<T*>(s.mapping.data + s.offsets.input);
+        std::size_t channel = 0;
+        for (const auto& bus : p.inputs)
+            for (std::size_t ch = 0; ch < bus.channels(); ++ch) {
+                (void)s.ops.copy(bus.channel(ch).first(p.frames),
+                                 std::span<T>(samples + channel * limit.frames, p.frames));
+                ++channel;
+            }
+        s.pending = ++s.sequence;
+        s.pendingFrames = p.frames;
+        ticket = s.pending;
+        h.sequence = ticket;
+        h.blockFrames = p.frames;
+        h.audioOperation = 0;
+        h.inputEvents = count;
+        h.inputBytes = bytes;
+        h.steadyFrame = p.steadyFrame;
+        h.hasTransport = p.transport ? 1u : 0u;
+        h.transport = p.transport ? encode(*p.transport) : Transport{};
+        h.audioState.store(1, std::memory_order_seq_cst);
+        if (h.audioSleeping.load(std::memory_order_seq_cst))
+            s.audioWake.signal();
+        return Status::ok;
+    }
+    if (!ticket || ticket != s.pending || p.frames != s.pendingFrames)
+        return Status::invalid_argument;
+    if (state != 2) {
+        silence();
+        return Status::would_block;
+    }
+    const auto sequence = h.sequence;
+    const auto status = h.audioStatus;
+    const auto count = h.outputEvents, bytes = h.outputBytes;
+    Status r = sequence != ticket || status > std::uint32_t(Status::disconnected) ||
+                       count > limit.events || bytes > limit.payload
+                   ? Status::invalid_argument
+                   : Status(status);
+    if (r == Status::ok) {
+        const auto* samples = reinterpret_cast<const T*>(s.mapping.data + s.offsets.output);
+        std::size_t channel = 0;
+        for (const auto& bus : p.outputs)
+            for (std::size_t ch = 0; ch < bus.channels(); ++ch) {
+                (void)s.ops.copy(std::span<const T>(samples + channel * limit.frames, p.frames),
+                                 bus.channel(ch).first(p.frames));
+                ++channel;
+            }
+        if (bytes)
+            std::memcpy(s.payload.get(), s.mapping.data + s.offsets.outputPayload, bytes);
+        auto& events = p.outputEvents ? *p.outputEvents : s.discardEvents;
+        r = readEvents(reinterpret_cast<const Event*>(s.mapping.data + s.offsets.outputEvents),
+                       s.payload.get(), count, bytes, limit.events, limit.payload, p.frames,
+                       events);
+    }
+    s.pending = 0;
+    h.audioState.store(0, std::memory_order_release);
+    if (r != Status::ok)
+        silence();
+    return r;
+}
+Status PluginWorker::submit(const PluginProcess<float>& p, std::uint64_t& t) noexcept {
+    return exchange(p, t, true);
+}
+Status PluginWorker::submit(const PluginProcess<double>& p, std::uint64_t& t) noexcept {
+    return exchange(p, t, true);
+}
+Status PluginWorker::collect(const PluginProcess<float>& p, std::uint64_t t) noexcept {
+    return exchange(p, t, false);
+}
+Status PluginWorker::collect(const PluginProcess<double>& p, std::uint64_t t) noexcept {
+    return exchange(p, t, false);
+}
+Status PluginWorker::discard(std::uint64_t t) noexcept {
+    if (!state_)
+        return Status::not_prepared;
+    if (!t || t != state_->pending)
+        return Status::invalid_argument;
+    state_->pending = 0;
+    return Status::ok;
+}
 Status PluginWorker::poll() noexcept {
     std::uint32_t flags = 0;
     return poll(flags);
@@ -427,6 +670,7 @@ Status PluginWorker::poll(std::uint32_t& requests) noexcept {
         return Status::not_prepared;
     const auto r = state_->health();
     if (r == Status::ok) {
+        state_->reverse();
         requests = state_->header->requests.exchange(0, std::memory_order_acq_rel);
         state_->refreshTiming(); // Latency/tail may change while the plugin runs.
     }
@@ -563,5 +807,234 @@ Status PluginWorker::closeEditor() noexcept {
 }
 void PluginWorker::close() noexcept {
     state_.reset();
+}
+
+Status detail::PluginRemoteAccess::launch(PluginWorker& w, const PluginIsolationOptions& o,
+                                          PluginFormat f, const std::filesystem::path& p,
+                                          std::string_view id, std::uint32_t mode,
+                                          const rpc::HostSnapshot& host,
+                                          const PluginHostCallbacks* callbacks,
+                                          const ClapHostServices* services) noexcept {
+    try {
+        PluginWorkerOptions options;
+        options.processing.useFloat64 = mode == 1;
+        options.processing.maximumFrames = o.maximumFrames;
+        options.processing.maximumEvents = o.maximumEvents;
+        options.maximumChannelsPerDirection = o.maximumChannelsPerDirection;
+        options.maximumPayloadBytes = o.maximumPayloadBytes;
+        options.maximumStateBytes = o.maximumStateBytes;
+        options.startupTimeoutMs = o.startupTimeoutMs;
+        options.controlTimeoutMs = o.controlTimeoutMs;
+        options.heartbeatTimeoutMs = o.heartbeatTimeoutMs;
+        options.scheduling = o.scheduling;
+        rpc::Writer writer;
+        writer(host);
+        return w.launchMode(o.workerExecutable, f, p, id, options, mode, writer.bytes, callbacks,
+                            services);
+    } catch (const std::bad_alloc&) {
+        return Status::allocation_failed;
+    } catch (...) {
+        return Status::invalid_argument;
+    }
+}
+Status detail::PluginRemoteAccess::request(PluginWorker& w, std::span<const std::uint8_t> in,
+                                           std::vector<std::uint8_t>& out) noexcept {
+    if (!w.state_)
+        return Status::not_prepared;
+    auto& s = *w.state_;
+    const auto status = s.canControl();
+    if (status != Status::ok)
+        return status;
+    if (in.size() > s.limits.stateBytes)
+        return Status::block_too_large;
+    try {
+        if (!in.empty())
+            std::memcpy(s.mapping.data + s.offsets.control, in.data(), in.size());
+        s.header->controlBytes = std::uint32_t(in.size());
+        const auto r = s.rpc(Command::remote);
+        if (r != Status::ok)
+            return r;
+        const auto n = s.header->controlBytes;
+        if (n > s.limits.stateBytes)
+            return Status::invalid_argument;
+        const auto* p = reinterpret_cast<const std::uint8_t*>(s.mapping.data + s.offsets.control);
+        std::vector<std::uint8_t> next(p, p + n);
+        out.swap(next);
+        return Status::ok;
+    } catch (const std::bad_alloc&) {
+        return Status::allocation_failed;
+    } catch (...) {
+        return Status::invalid_argument;
+    }
+}
+Status detail::PluginRemoteAccess::callbacks(PluginWorker& w, const PluginHostCallbacks& c,
+                                             const ClapHostServices& s) noexcept {
+    if (!w.state_)
+        return Status::not_prepared;
+    try {
+        w.state_->callbacks = c;
+        w.state_->services = s;
+        return Status::ok;
+    } catch (...) {
+        return Status::allocation_failed;
+    }
+}
+Status detail::PluginRemoteAccess::preparation(PluginWorker& w,
+                                               const PluginPrepareOptions& o) noexcept {
+    if (!w.state_)
+        return Status::not_prepared;
+    auto& s = *w.state_;
+    if (o.maximumFrames > s.limits.frames || o.maximumEvents > s.limits.events ||
+        (s.header->bootMode != 1 && o.useFloat64 != bool(s.limits.flags & 1u)))
+        return Status::invalid_spec;
+    s.options.processing = o;
+    s.previous = false;
+    s.pending = 0;
+    s.flushPending = false;
+    s.info.pipelineLatencyFrames =
+        s.options.scheduling == PluginScheduling::pipelined ? o.maximumFrames : 0;
+    return Status::ok;
+}
+Status detail::PluginRemoteAccess::audioCommand(PluginWorker& w, std::uint32_t command) noexcept {
+    if (!w.state_)
+        return Status::not_prepared;
+    auto& s = *w.state_;
+    if (!s.alive.load(std::memory_order_acquire))
+        return Status::disconnected;
+    if (command < 1 || command > 3)
+        return Status::invalid_argument;
+    s.pending = 0;
+    s.previous = false;
+    s.flushPending = false;
+    // Commands are ordered by the serialized audio owner. A following start may
+    // coalesce an unconsumed stop; start always performs the requested stop first.
+    if (command == 3)
+        s.header->clientReset.store(1, std::memory_order_release);
+    else
+        s.header->clientAudioCommand.store(command, std::memory_order_release);
+    if (s.header->audioSleeping.load(std::memory_order_seq_cst))
+        s.audioWake.signal();
+    return Status::ok;
+}
+Status detail::PluginRemoteAccess::audioPort(PluginWorker& w, bool input, std::uint32_t index,
+                                             bool active, std::uint32_t bits) noexcept {
+    if (!w.state_)
+        return Status::not_prepared;
+    auto& s = *w.state_;
+    auto& h = *s.header;
+    const auto state = h.audioPortState.load(std::memory_order_acquire);
+    if (state) {
+        if (h.audioPortInput != std::uint32_t(input) || h.audioPortIndex != index ||
+            h.audioPortActive != std::uint32_t(active) || h.audioPortBits != bits)
+            return Status::transition_in_progress;
+        if (state != 2)
+            return Status::would_block;
+        const auto r = h.audioPortStatus.load(std::memory_order_acquire);
+        h.audioPortState.store(0, std::memory_order_release);
+        return r <= std::uint32_t(Status::disconnected) ? Status(r) : Status::invalid_argument;
+    }
+    h.audioPortInput = std::uint32_t(input);
+    h.audioPortIndex = index;
+    h.audioPortActive = std::uint32_t(active);
+    h.audioPortBits = bits;
+    h.audioPortState.store(1, std::memory_order_seq_cst);
+    if (h.audioSleeping.load(std::memory_order_seq_cst))
+        s.audioWake.signal();
+    return Status::would_block;
+}
+Status detail::PluginRemoteAccess::shape(PluginWorker& w, const PluginDescription& d) noexcept {
+    if (!w.state_)
+        return Status::not_prepared;
+    auto& s = *w.state_;
+    if (d.inputs.size() > 64 || d.outputs.size() > 64)
+        return Status::channel_mismatch;
+    std::uint32_t inputs = 0, outputs = 0;
+    for (const auto& p : d.inputs) {
+        if (p.channels > s.limits.channels - inputs)
+            return Status::channel_mismatch;
+        inputs += p.channels;
+    }
+    for (const auto& p : d.outputs) {
+        if (p.channels > s.limits.channels - outputs)
+            return Status::channel_mismatch;
+        outputs += p.channels;
+    }
+    try {
+        std::vector<std::uint32_t> in, out;
+        for (const auto& p : d.inputs)
+            in.push_back(p.channels);
+        for (const auto& p : d.outputs)
+            out.push_back(p.channels);
+        s.info.inputChannels.swap(in);
+        s.info.outputChannels.swap(out);
+        return Status::ok;
+    } catch (...) {
+        return Status::allocation_failed;
+    }
+}
+Status detail::PluginRemoteAccess::flushAudio(PluginWorker& w, const PluginEventBuffer& in,
+                                              PluginEventBuffer& out) noexcept {
+    if (!w.state_)
+        return Status::not_prepared;
+    auto& s = *w.state_;
+    auto& h = *s.header;
+    const auto& limit = s.limits;
+    if (!s.alive.load(std::memory_order_acquire))
+        return Status::disconnected;
+    if (s.pending && !s.flushPending)
+        return Status::transition_in_progress;
+    const auto state = h.audioState.load(std::memory_order_acquire);
+    if (!s.flushPending) {
+        if (state == 1)
+            return Status::would_block;
+        std::uint32_t count = 0, bytes = 0;
+        auto r =
+            writeEvents(&in, reinterpret_cast<Event*>(s.mapping.data + s.offsets.inputEvents),
+                        reinterpret_cast<std::uint8_t*>(s.mapping.data + s.offsets.inputPayload),
+                        limit.events, limit.payload, count, bytes);
+        if (r != Status::ok)
+            return r;
+        s.pending = ++s.sequence;
+        s.pendingFrames = s.options.processing.maximumFrames;
+        s.flushPending = true;
+        h.sequence = s.pending;
+        h.blockFrames = s.pendingFrames;
+        h.audioOperation = 1;
+        h.inputEvents = count;
+        h.inputBytes = bytes;
+        h.hasTransport = 0;
+        h.steadyFrame = -1;
+        h.audioState.store(1, std::memory_order_seq_cst);
+        if (h.audioSleeping.load(std::memory_order_seq_cst))
+            s.audioWake.signal();
+        return Status::would_block;
+    }
+    out.reset();
+    if (state != 2)
+        return Status::would_block;
+    const auto count = h.outputEvents, bytes = h.outputBytes, status = h.audioStatus;
+    Status result = h.sequence != s.pending || status > std::uint32_t(Status::disconnected) ||
+                            count > limit.events || bytes > limit.payload
+                        ? Status::invalid_argument
+                        : Status(status);
+    if (result == Status::ok) {
+        if (bytes)
+            std::memcpy(s.payload.get(), s.mapping.data + s.offsets.outputPayload, bytes);
+        result = readEvents(reinterpret_cast<const Event*>(s.mapping.data + s.offsets.outputEvents),
+                            s.payload.get(), count, bytes, limit.events, limit.payload,
+                            s.pendingFrames, out);
+    }
+    s.pending = 0;
+    s.flushPending = false;
+    h.audioState.store(0, std::memory_order_release);
+    if (result != Status::ok)
+        out.reset();
+    return result;
+}
+ClapProcessStatus detail::PluginRemoteAccess::processStatus(const PluginWorker& w) noexcept {
+    if (!w.state_)
+        return ClapProcessStatus::error;
+    const auto v = w.state_->header->clapProcessStatus.load(std::memory_order_acquire);
+    return v <= 4 ? ClapProcessStatus(v) : ClapProcessStatus::error;
 }
 } // namespace cyaudio

@@ -1,3 +1,4 @@
+#include "../src/plugins/PluginInternal.h"
 #include "cyaudio/CyAudioCore.h"
 #include <algorithm>
 #include <array>
@@ -25,7 +26,7 @@ void ok(Status r, const std::source_location loc = std::source_location::current
 template <Sample T>
 void run(const std::filesystem::path& path, PluginFormat format, std::uint32_t gainId) {
     std::unique_ptr<PluginProvider> provider;
-    ok(createPluginProvider(format, provider));
+    ok(cyaudio::detail::createInProcessPluginProvider(format, provider));
     std::vector<PluginDescriptor> list;
     ok(provider->scan(path, list));
     require(list.size() == 1);
@@ -105,15 +106,21 @@ void run(const std::filesystem::path& path, PluginFormat format, std::uint32_t g
             returned.event(1)->frame == 31);
     require(returned.event(1)->bytes.size() == 12000);
     events.reset();
-    std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    ok(plugin.process(PluginProcess<T>{ins, outs, 64, nullptr, &returned}));
-    ok(plugin.stop());
-    ok(plugin.deactivate());
-    if (format == PluginFormat::lv2) {
-        double worked = 0;
-        ok(plugin.parameterValue(8, worked));
-        require(worked > 0);
+    // Worker completion is asynchronous. A fixed sleep races the scheduler,
+    // especially under instrumentation; drain responses until observable completion.
+    const auto deadline=std::chrono::steady_clock::now()+std::chrono::seconds(3);
+    double worked=0;
+    for(;;) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        ok(plugin.process(PluginProcess<T>{ins, outs, 64, nullptr, &returned}));
+        ok(plugin.stop());
+        if(format!=PluginFormat::lv2)break;
+        ok(plugin.parameterValue(8,worked)); // Main, active but audio owner stopped.
+        if(worked>0 || std::chrono::steady_clock::now()>=deadline)break;
+        ok(plugin.start());
     }
+    ok(plugin.deactivate());
+    if(format==PluginFormat::lv2)require(worked>0);
     ok(plugin.loadState(state));
     double value = 0;
     ok(plugin.parameterValue(gainId, value));
@@ -134,7 +141,7 @@ void run(const std::filesystem::path& path, PluginFormat format, std::uint32_t g
 void rejectedOutput(const std::filesystem::path& path, PluginFormat format) {
     const bool lv2 = format == PluginFormat::lv2;
     std::unique_ptr<PluginProvider> provider;
-    ok(createPluginProvider(format, provider));
+    ok(cyaudio::detail::createInProcessPluginProvider(format, provider));
     PluginInstance plugin;
     ok(provider->create(path, lv2 ? "urn:cydsp:lv2-fixture" : "jsfx", {}, plugin));
     PluginPrepareOptions options;
@@ -209,7 +216,7 @@ float jsfxHistory(const std::vector<std::uint8_t>& state) {
 // including a stopped-to-playing transport transition, and later reactivations.
 void jsfxSerialize(const std::filesystem::path& path) {
     std::unique_ptr<PluginProvider> provider;
-    ok(createPluginProvider(PluginFormat::jsfx, provider));
+    ok(cyaudio::detail::createInProcessPluginProvider(PluginFormat::jsfx, provider));
     PluginPrepareOptions options;
     options.maximumFrames = 64;
     AudioBuffer<float> input, output;
@@ -332,7 +339,7 @@ void isolated(const std::filesystem::path& directory, PluginFormat format) {
 #if defined(_WIN32)
 void editor(const std::filesystem::path& directory, PluginFormat format) {
     std::unique_ptr<PluginProvider> provider;
-    ok(createPluginProvider(format, provider));
+    ok(cyaudio::detail::createInProcessPluginProvider(format, provider));
     PluginInstance p;
     PluginEditorSize requested;
     PluginHostCallbacks cb{&requested,

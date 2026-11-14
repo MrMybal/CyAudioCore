@@ -87,3 +87,6 @@ CyAudioCore uses the [MIT license](LICENSE). Dependencies retain their own terms
 - [Documentation](docs/Modules.md)
 - [Architecture](docs/Architecture.md)
 - [Migration](docs/Migration.fr.md)
+
+Built-in plugin providers require an explicit worker executable and always isolate
+module/preset discovery and instances. See [isolation and scheduling](docs/PluginIsolation.fr.md).

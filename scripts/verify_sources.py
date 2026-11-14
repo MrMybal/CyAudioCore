@@ -109,6 +109,10 @@ toolchain = (ROOT / 'cmake/toolchains/windows-arm64-clang.cmake').read_text(enco
 require('set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)' in toolchain,
         'ARM cross-build probes must use static libraries')
 require(not (ROOT / '.github/workflows').exists(), 'No GitHub Actions authorized')
+
+# The production worker helper is a separate explicit opt-in.
+require(bool(re.search(r'option\(CYAUDIOCORE_BUILD_PLUGIN_WORKER\s+"[^"\n]*"\s+OFF\)', (ROOT/'CMakeLists.txt').read_text(encoding='utf-8'))), 'Worker helper must be opt-in')
+
 if errors:
     raise SystemExit('\n'.join(errors))
 print(f'PASS: {count} C++ sources/headers; {len(manifest["components"])} pinned commercially compatible components; includes, Python, JSON and build policy')

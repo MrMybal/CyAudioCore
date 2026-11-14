@@ -1,3 +1,4 @@
+#include "../src/plugins/PluginInternal.h"
 #include <cyaudio/CyAudioCore.h>
 #include "detail/AudioCallbackAdapter.h"
 #include "PathMeasurement.h"
@@ -92,7 +93,7 @@ void effects(std::size_t frames, bool chain) {
     },[&] { return signature(output.block()); });
 }
 void plugins(std::size_t frames, const std::filesystem::path& directory) {
-    std::unique_ptr<PluginProvider> provider; ok(createPluginProvider(PluginFormat::vst3,provider));
+    std::unique_ptr<PluginProvider> provider; ok(cyaudio::detail::createInProcessPluginProvider(PluginFormat::vst3,provider));
     const auto path=directory/"cydsp_vst_fixture.vst3";
     std::vector<PluginDescriptor> descriptions; ok(provider->scan(path,descriptions)); require(descriptions.size()==1);
     std::array<PluginInstance,8> instances;

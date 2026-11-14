@@ -1,4 +1,5 @@
 #include "ClapModule.h"
+#include "PluginRpc.h"
 #include "cyaudio/plugins/ClapExtensions.h"
 #include <algorithm>
 #include <cstring>
@@ -149,6 +150,7 @@ struct MetadataReceiver : Budget {
 } // namespace
 
 struct ClapPresetDiscovery::State : Budget {
+    std::unique_ptr<PluginWorker> worker;
     std::shared_ptr<detail::ClapModule> module;
     const clap_preset_discovery_provider_t* provider = nullptr;
     ClapPresetCatalogue catalogue;
@@ -223,7 +225,10 @@ ClapPresetDiscovery::~ClapPresetDiscovery() = default;
 ClapPresetDiscovery::ClapPresetDiscovery(ClapPresetDiscovery&&) noexcept = default;
 ClapPresetDiscovery& ClapPresetDiscovery::operator=(ClapPresetDiscovery&&) noexcept = default;
 Status ClapPresetDiscovery::providers(const std::filesystem::path& path,
-                                      std::vector<ClapPresetProviderInfo>& out) noexcept {
+                                      std::vector<ClapPresetProviderInfo>& out,
+                                      const PluginIsolationOptions& options) noexcept {
+    if (!detail::insidePluginWorker)
+        return detail::PluginRemoteAccess::presetProviders(path, out, options);
     try {
         std::shared_ptr<detail::ClapModule> module;
         const auto s = detail::loadClapModule(path, module, false);
@@ -258,11 +263,30 @@ Status ClapPresetDiscovery::providers(const std::filesystem::path& path,
         return Status::unsupported_format;
     }
 }
-Status ClapPresetDiscovery::open(const std::filesystem::path& path, std::string_view id) noexcept {
+Status ClapPresetDiscovery::open(const std::filesystem::path& path, std::string_view id,
+                                 const PluginIsolationOptions& options) noexcept {
     if (id.empty() || !validInput(id))
         return Status::invalid_argument;
     try {
         auto next = std::make_unique<State>();
+        if (!detail::insidePluginWorker) {
+            next->worker = std::make_unique<PluginWorker>();
+            auto status = detail::PluginRemoteAccess::launch(*next->worker, options,
+                                                             PluginFormat::clap, path, {}, 3);
+            if (status != Status::ok)
+                return status;
+            detail::rpc::Writer request;
+            request(detail::rpc::Op::presetOpen, std::string(id));
+            std::vector<std::uint8_t> response;
+            status = detail::PluginRemoteAccess::request(*next->worker, request.bytes, response);
+            if (status != Status::ok)
+                return status;
+            detail::rpc::Reader reader(response);
+            reader(next->catalogue);
+            reader.done();
+            state_.swap(next);
+            return Status::ok;
+        }
         const auto s = detail::loadClapModule(path, next->module, false);
         if (s != Status::ok)
             return s;
@@ -299,6 +323,21 @@ Status ClapPresetDiscovery::metadata(ClapPresetLocationKind kind, std::string_vi
     try {
         if (!validPresetLocation(kind, location))
             return Status::invalid_argument;
+        if (state_->worker) {
+            detail::rpc::Writer request;
+            request(detail::rpc::Op::presetMetadata, kind, std::string(location));
+            std::vector<std::uint8_t> response;
+            const auto status =
+                detail::PluginRemoteAccess::request(*state_->worker, request.bytes, response);
+            if (status != Status::ok)
+                return status;
+            detail::rpc::Reader reader(response);
+            std::vector<ClapPresetMetadata> next;
+            reader(next);
+            reader.done();
+            out.swap(next);
+            return Status::ok;
+        }
         MetadataReceiver receiver(kind);
         const auto callbacks = receiver.interface();
         const std::string path(location);

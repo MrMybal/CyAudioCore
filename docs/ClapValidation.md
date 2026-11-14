@@ -1,6 +1,8 @@
 # CLAP validation — 2026-11-14
 
-This records the extended CLAP host, not universal plugin compatibility.
+This records the earlier extended CLAP host baseline, before mandatory isolation.
+For the current worker campaign, see [process isolation validation](PluginIsolationValidation.md).
+It does not establish universal plugin compatibility.
 The compiler-input SHA-256, including the pinned production vendor sources, is:
 
 `2c7654064fedd7779aab181b590c3b6d51eb1468a3e11839fa908402ba037da8`
@@ -72,10 +74,13 @@ do not establish compatibility with commercial native editors. macOS/Linux execu
 UIKit, Windows ARM64 runtime and broader commercial-plugin acceptance were not run.
 No claim is made for experimental/third-party CLAP extensions or for malicious code.
 
-The advanced `ClapExtensions` controls are in-process; the existing worker protocol
-does not mirror this interface or arbitrary application callbacks. Native CLAP events,
-standard state, existing UI operations and request flags still work through that worker.
-See the [feature contract and integration example](Clap.fr.md).
+The earlier campaign above predates mandatory isolation. The version-3 worker now
+mirrors stable portable CLAP controls and copied host notifications, including
+bounded reverse menu calls. The `pluginIsolation` suite additionally covers public
+isolated providers, discovery/presets, both precisions, variable frames, split-phase
+audio, late-result discard, abrupt child exits and RPC timeouts. Application task
+function pointers are rejected; an optional worker-local serial executor is explicit.
+See the [isolation contract](PluginIsolation.fr.md).
 
 Accepted reports and logs are retained locally under `build/clap-completion`,
 `build/clap-acceptance` and `build/native-logs`. Nothing in the production CMake

@@ -1,5 +1,6 @@
-#include "cyaudio/core/DspTypes.h"
+#include "PluginRemoteServer.h"
 #include "PluginWire.h"
+#include "cyaudio/core/DspTypes.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -79,7 +80,12 @@ template <Sample T> class Server {
     const Limits limit; // Private copy; the shared header is not re-read for bounds.
     const Layout offsets;
     const std::uint32_t parent;
-    const PluginPrepareOptions options;
+    PluginPrepareOptions options;
+    const bool hosted;
+    detail::RemoteHost& remoteHost;
+    PluginProvider& provider;
+    const std::filesystem::path path;
+    ClapPresetDiscovery discovery;
     PluginInstance& plugin;
     Wake& audioWake;
     Wake& controlWake;
@@ -88,6 +94,10 @@ template <Sample T> class Server {
     std::vector<T*> outputPointers;
     std::vector<AudioBlock<const T>> inputs;
     std::vector<AudioBlock<T>> outputs;
+    std::vector<const float*> input32;
+    std::vector<float*> output32;
+    std::vector<AudioBlock<const float>> inputs32;
+    std::vector<AudioBlock<float>> outputs32;
     std::thread thread;
     std::atomic<std::uint32_t> command{0}, commandStatus{0};
     std::binary_semaphore acknowledged{0};
@@ -95,11 +105,20 @@ template <Sample T> class Server {
 
     // ---- audio thread ----
     void audio() noexcept {
-        const auto count = h.inputEvents, used = h.inputBytes;
+        const auto count = h.inputEvents, used = h.inputBytes, frames = h.blockFrames;
+        const auto operation = h.audioOperation;
         Status result =
             readEvents(reinterpret_cast<const Event*>(data + offsets.inputEvents),
                        reinterpret_cast<const std::uint8_t*>(data + offsets.inputPayload), count,
-                       used, limit.events, limit.payload, limit.frames, incoming);
+                       used, limit.events, limit.payload, frames, incoming);
+        if (frames < options.minimumFrames || frames > options.maximumFrames ||
+            frames > limit.frames || operation > 1)
+            result = Status::invalid_argument;
+        const auto actionStatus = h.clientAudioStatus.exchange(0, std::memory_order_acq_rel);
+        if (actionStatus > std::uint32_t(Status::disconnected))
+            result = Status::invalid_argument;
+        else if (actionStatus)
+            result = Status(actionStatus);
         const auto wireTransport = h.transport;
         const auto hasTransport = h.hasTransport;
         const auto steadyFrame = h.steadyFrame;
@@ -107,10 +126,28 @@ template <Sample T> class Server {
             wireTransport.denominator > 65535)
             result = Status::invalid_argument;
         const auto transport = decode(wireTransport);
-        if (result == Status::ok)
-            result = plugin.process(
-                PluginProcess<T>{inputs, outputs, limit.frames, &incoming, &outgoing,
-                                 hasTransport ? &transport : nullptr, steadyFrame});
+        if (result == Status::ok && plugin.lifecycle() == PluginLifecycle::active)
+            result = plugin.start();
+        if (result == Status::ok) {
+            if (operation == 1)
+                result = plugin.flushAudio(incoming, outgoing);
+            else if constexpr (std::same_as<T, double>) {
+                if (hosted && !options.useFloat64)
+                    result = plugin.process(
+                        PluginProcess<float>{inputs32, outputs32, frames, &incoming, &outgoing,
+                                             hasTransport ? &transport : nullptr, steadyFrame});
+                else
+                    result = plugin.process(
+                        PluginProcess<T>{inputs, outputs, frames, &incoming, &outgoing,
+                                         hasTransport ? &transport : nullptr, steadyFrame});
+            } else
+                result = plugin.process(
+                    PluginProcess<T>{inputs, outputs, frames, &incoming, &outgoing,
+                                     hasTransport ? &transport : nullptr, steadyFrame});
+        }
+        if (auto* ext = plugin.clapExtensions())
+            h.clapProcessStatus.store(std::uint32_t(ext->lastProcessStatus()),
+                                      std::memory_order_release);
         std::uint32_t outputEvents = 0, outputBytes = 0;
         if (result == Status::ok)
             result = writeEvents(&outgoing, reinterpret_cast<Event*>(data + offsets.outputEvents),
@@ -131,6 +168,10 @@ template <Sample T> class Server {
             paused = false;
         else if (request == AudioCommand::stop) {
             paused = true;
+            if (h.clientReset.exchange(0, std::memory_order_acq_rel) &&
+                (plugin.lifecycle() == PluginLifecycle::active ||
+                 plugin.lifecycle() == PluginLifecycle::processing))
+                status = plugin.reset();
             if (plugin.lifecycle() == PluginLifecycle::processing)
                 status = plugin.stop();
         } else if (request == AudioCommand::start) {
@@ -158,6 +199,32 @@ template <Sample T> class Server {
                 if (request == AudioCommand::quit)
                     return;
                 continue;
+            }
+            const auto client =
+                paused ? 0u : h.clientAudioCommand.exchange(0, std::memory_order_acq_rel);
+            if (client) {
+                Status status = Status::ok;
+                if (plugin.lifecycle() == PluginLifecycle::processing &&
+                    (client == 1 || client == 2))
+                    status = plugin.stop();
+                if (status == Status::ok && client == 2 &&
+                    plugin.lifecycle() == PluginLifecycle::active)
+                    status = plugin.start();
+
+                h.clientAudioStatus.store(std::uint32_t(status), std::memory_order_release);
+            }
+            if (!paused && h.clientReset.exchange(0, std::memory_order_acq_rel)) {
+                const auto status = plugin.reset();
+                h.clientAudioStatus.store(std::uint32_t(status), std::memory_order_release);
+            }
+            if (!paused && h.audioPortState.load(std::memory_order_acquire) == 1) {
+                auto* ext = plugin.clapExtensions();
+                const auto status =
+                    ext ? ext->setAudioPortActive(h.audioPortInput != 0, h.audioPortIndex,
+                                                  h.audioPortActive != 0, h.audioPortBits)
+                        : Status::unsupported_format;
+                h.audioPortStatus.store(std::uint32_t(status), std::memory_order_relaxed);
+                h.audioPortState.store(2, std::memory_order_release);
             }
             const bool stopping = h.shutdown.load(std::memory_order_acquire) != 0;
             if (!paused && !stopping && h.audioState.load(std::memory_order_acquire) == 1) {
@@ -198,7 +265,10 @@ template <Sample T> class Server {
             const auto token = audioWake.token();
             h.audioSleeping.store(1, std::memory_order_seq_cst);
             if (command.load(std::memory_order_seq_cst) == std::uint32_t(AudioCommand::none) &&
-                (paused || stopping || h.audioState.load(std::memory_order_seq_cst) != 1))
+                (paused || stopping || h.audioState.load(std::memory_order_seq_cst) != 1) &&
+                (paused || (!h.clientAudioCommand.load(std::memory_order_seq_cst) &&
+                            !h.clientReset.load(std::memory_order_seq_cst) &&
+                            h.audioPortState.load(std::memory_order_seq_cst) != 1)))
                 audioWake.wait(token, 20);
             h.audioSleeping.store(0, std::memory_order_release);
             spins = 0;
@@ -279,8 +349,108 @@ template <Sample T> class Server {
             (void)bringUp(); // Recover from an earlier failed load/restart if possible.
         return result;
     }
+    Status rebuildViews() {
+        if (!describe(plugin, h, limit.channels, true))
+            return Status::channel_mismatch;
+        inputs.clear();
+        outputs.clear();
+        inputs32.clear();
+        outputs32.clear();
+        std::size_t channel = 0;
+        for (std::uint32_t i = 0; i < h.inputCount; ++i) {
+            inputs.emplace_back(inputPointers.data() + channel, h.inputChannels[i], limit.frames);
+            if (hosted)
+                inputs32.emplace_back(input32.data() + channel, h.inputChannels[i], limit.frames);
+            channel += h.inputChannels[i];
+        }
+        channel = 0;
+        for (std::uint32_t i = 0; i < h.outputCount; ++i) {
+            outputs.emplace_back(outputPointers.data() + channel, h.outputChannels[i],
+                                 limit.frames);
+            if (hosted)
+                outputs32.emplace_back(output32.data() + channel, h.outputChannels[i],
+                                       limit.frames);
+            channel += h.outputChannels[i];
+        }
+        return Status::ok;
+    }
+    Status remote() noexcept {
+        try {
+            const auto n = h.controlBytes;
+            if (n > limit.stateBytes)
+                return Status::invalid_argument;
+            std::vector<std::uint8_t> bytes(n);
+            if (n)
+                std::memcpy(bytes.data(), data + offsets.control, n);
+            detail::rpc::Reader r(bytes);
+            detail::rpc::Writer w;
+            detail::rpc::Op op;
+            r(op);
+            Status result = Status::unsupported_format;
+            bool parked = false;
+            const bool lifecycle =
+                op == detail::rpc::Op::activate || op == detail::rpc::Op::deactivate ||
+                op == detail::rpc::Op::save || op == detail::rpc::Op::saveContext;
+            const bool rebuild =
+                op == detail::rpc::Op::selectConfiguration || op == detail::rpc::Op::configure ||
+                op == detail::rpc::Op::refresh || op == detail::rpc::Op::load ||
+                op == detail::rpc::Op::loadContext || op == detail::rpc::Op::preset;
+            if (lifecycle || rebuild) {
+                (void)audioCall(AudioCommand::pause);
+                parked = true;
+            }
+            if (op == detail::rpc::Op::activate) {
+                PluginPrepareOptions next;
+                r(next);
+                r.done();
+                if (next.maximumFrames > limit.frames || next.maximumEvents > limit.events)
+                    result = Status::invalid_spec;
+                else {
+                    result = plugin.activate(next);
+                    if (result == Status::ok) {
+                        options = next;
+                        result = rebuildViews();
+                        if (result != Status::ok)
+                            (void)plugin.deactivate();
+                    }
+                }
+            } else if (op == detail::rpc::Op::deactivate) {
+                r.done();
+                (void)audioCall(AudioCommand::stop);
+                h.clientAudioCommand.store(0, std::memory_order_release);
+                h.clientReset.store(0, std::memory_order_release);
+                result = plugin.lifecycle() == PluginLifecycle::active ? plugin.deactivate()
+                                                                       : Status::ok;
+            } else
+                result =
+                    detail::dispatchRemote(r, w, op, plugin, discovery, provider, path, remoteHost);
+            if (rebuild && plugin.lifecycle() == PluginLifecycle::initialized) {
+                const auto shape = rebuildViews();
+                if (result == Status::ok)
+                    result = shape;
+            }
+            if (parked)
+                (void)audioCall(AudioCommand::resume);
+            if (result == Status::ok) {
+                if (w.bytes.size() > limit.stateBytes)
+                    return Status::block_too_large;
+                if (!w.bytes.empty())
+                    std::memcpy(data + offsets.control, w.bytes.data(), w.bytes.size());
+                h.controlBytes = std::uint32_t(w.bytes.size());
+            }
+            return result;
+        } catch (const std::bad_alloc&) {
+            (void)audioCall(AudioCommand::resume);
+            return Status::allocation_failed;
+        } catch (...) {
+            (void)audioCall(AudioCommand::resume);
+            return Status::invalid_argument;
+        }
+    }
     Status control() noexcept {
         const auto request = Command(h.command);
+        if (request == Command::remote)
+            return remote();
         Status result = Status::unsupported_format;
         if (request == Command::save)
             return save();
@@ -289,7 +459,8 @@ template <Sample T> class Server {
         if (request == Command::openEditor) {
 #if defined(_WIN32)
             if (h.windowApi != std::uint32_t(PluginWindowApi::win32) &&
-                !(h.windowApi == std::uint32_t(PluginWindowApi::unspecified) && h.floating && !h.windowHandle))
+                !(h.windowApi == std::uint32_t(PluginWindowApi::unspecified) && h.floating &&
+                  !h.windowHandle))
                 return Status::unsupported_backend;
 #else
             if (!h.floating || h.windowHandle)
@@ -335,10 +506,11 @@ template <Sample T> class Server {
   public:
     Server(Header& header, std::byte* memory, const Limits& fixed,
            const PluginPrepareOptions& prepared, PluginInstance& instance, Wake& audio,
-           Wake& control)
+           Wake& control, detail::RemoteHost& host, PluginProvider& source,
+           const std::filesystem::path& module)
         : h(header), data(memory), limit(fixed), offsets(layout(header)), parent(header.parentPid),
-          options(prepared),
-          plugin(instance), audioWake(audio), controlWake(control) {}
+          options(prepared), hosted(header.bootMode == 1), remoteHost(host), provider(source),
+          path(module), plugin(instance), audioWake(audio), controlWake(control) {}
     ~Server() {
         finish();
     }
@@ -358,20 +530,21 @@ template <Sample T> class Server {
                 inputPointers[ch] = input + ch * limit.frames;
                 outputPointers[ch] = output + ch * limit.frames;
             }
-            std::size_t channel = 0;
-            for (std::uint32_t i = 0; i < h.inputCount; ++i) {
-                inputs.emplace_back(inputPointers.data() + channel, h.inputChannels[i],
-                                    limit.frames);
-                channel += h.inputChannels[i];
+            if (hosted) {
+                input32.resize(limit.channels);
+                output32.resize(limit.channels);
+                const auto* in32 = reinterpret_cast<const float*>(data + offsets.input);
+                auto* out32 = reinterpret_cast<float*>(data + offsets.output);
+                for (std::size_t ch = 0; ch < limit.channels; ++ch) {
+                    input32[ch] = in32 + ch * limit.frames;
+                    output32[ch] = out32 + ch * limit.frames;
+                }
             }
-            channel = 0;
-            for (std::uint32_t i = 0; i < h.outputCount; ++i) {
-                outputs.emplace_back(outputPointers.data() + channel, h.outputChannels[i],
-                                     limit.frames);
-                channel += h.outputChannels[i];
-            }
+            auto shaped = rebuildViews();
+            if (shaped != Status::ok)
+                return shaped;
             thread = std::thread([this] { audioLoop(); });
-            return audioCall(AudioCommand::start);
+            return hosted ? Status::ok : audioCall(AudioCommand::start);
         } catch (const std::bad_alloc&) {
             return Status::allocation_failed;
         } catch (...) {
@@ -420,6 +593,7 @@ template <Sample T> class Server {
 } // namespace
 int runPluginWorker(std::string_view mappingName) noexcept {
     using namespace detail::wire;
+    detail::PluginWorkerScope workerScope;
     Mapping memory;
     Header* header = nullptr;
     try {
@@ -437,8 +611,8 @@ int runPluginWorker(std::string_view mappingName) noexcept {
             return fail(Status::incompatible_version);
         // One private copy of the launch configuration for the whole run.
         const Limits fixed = limits(h);
-        const PluginPrepareOptions options{h.sampleRate,       h.minimumFrames,
-                                           fixed.frames,       fixed.events,
+        const PluginPrepareOptions options{h.sampleRate,          h.minimumFrames,
+                                           fixed.frames,          fixed.events,
                                            bool(fixed.flags & 1), bool(fixed.flags & 2)};
         Wake audioWake, controlWake;
         if (audioWake.open(mappingName, "-audio", h.audioWake) != Status::ok ||
@@ -456,28 +630,78 @@ int runPluginWorker(std::string_view mappingName) noexcept {
             return fail(Status::unsupported_backend);
 #endif
         std::unique_ptr<PluginProvider> provider;
-        r = createPluginProvider(PluginFormat(h.format), provider);
+        r = detail::createInProcessPluginProvider(PluginFormat(h.format), provider);
         if (r != Status::ok)
             return fail(r);
         const auto path = std::filesystem::path(
             std::u8string_view(reinterpret_cast<const char8_t*>(h.pluginPath.data())));
+        detail::rpc::HostSnapshot snapshot;
+        if (h.initialBytes) {
+            std::vector<std::uint8_t> bytes(h.initialBytes);
+            std::memcpy(bytes.data(), memory.data + layout(h).control, bytes.size());
+            detail::rpc::Reader reader(bytes);
+            reader(snapshot);
+            reader.done();
+        }
+        detail::RemoteHost remoteHost(h, std::move(snapshot));
         PluginInstance plugin;
-        PluginHostCallbacks callbacks;
-        callbacks.context = &h;
-        callbacks.resizeEditor = [](void* context, PluginEditorSize size) noexcept {
-            auto& header = *static_cast<Header*>(context);
-            header.requestedWidth.store(size.width, std::memory_order_relaxed);
-            header.requestedHeight.store(size.height, std::memory_order_release);
-            header.requests.fetch_or(pluginEditorResize, std::memory_order_release);
-            return false; // Parent UI must decide after poll; never acknowledge a resize not
-                          // applied.
-        };
-        r = provider->create(path, h.pluginId.data(), callbacks, plugin);
+        if (h.bootMode >= 2) {
+            // Discovery has no audio thread. Loading/scanning takes place only in
+            // this disposable process, under the host's bounded RPC deadline.
+            ClapPresetDiscovery discovery;
+            h.boot.store(1, std::memory_order_release);
+            const auto offsets = layout(h);
+            while (!h.shutdown.load(std::memory_order_acquire) && parentRunning(h.parentPid)) {
+                h.heartbeat.fetch_add(1, std::memory_order_relaxed);
+                const auto token = controlWake.token();
+                if (h.controlState.load(std::memory_order_acquire) == 1) {
+                    Status status = Status::invalid_argument;
+                    try {
+                        const auto n = h.controlBytes;
+                        if (n > fixed.stateBytes)
+                            throw detail::rpc::Invalid{};
+                        std::vector<std::uint8_t> bytes(n);
+                        if (n)
+                            std::memcpy(bytes.data(), memory.data + offsets.control, n);
+                        detail::rpc::Reader reader(bytes);
+                        detail::rpc::Writer writer;
+                        detail::rpc::Op op;
+                        reader(op);
+                        if (h.command == std::uint32_t(Command::remote))
+                            status = detail::dispatchRemote(reader, writer, op, plugin, discovery,
+                                                            *provider, path, remoteHost);
+                        if (status == Status::ok) {
+                            if (writer.bytes.size() > fixed.stateBytes)
+                                status = Status::block_too_large;
+                            else {
+                                h.controlBytes = std::uint32_t(writer.bytes.size());
+                                if (!writer.bytes.empty())
+                                    std::memcpy(memory.data + offsets.control, writer.bytes.data(),
+                                                writer.bytes.size());
+                            }
+                        }
+                    } catch (const std::bad_alloc&) {
+                        status = Status::allocation_failed;
+                    } catch (...) {
+                        status = Status::invalid_argument;
+                    }
+                    h.controlStatus = std::uint32_t(status);
+                    h.controlState.store(2, std::memory_order_release);
+                }
+                pumpNativeMessages();
+                if (h.controlState.load(std::memory_order_acquire) != 1)
+                    controlWake.waitOrMessages(token, 8);
+            }
+            return 0;
+        }
+        r = provider->create(path, h.pluginId.data(), remoteHost.callbacks, plugin);
         if (r != Status::ok)
             return fail(r);
-        r = plugin.activate(options);
-        if (r != Status::ok)
-            return fail(r);
+        if (h.bootMode == 0) {
+            r = plugin.activate(options);
+            if (r != Status::ok)
+                return fail(r);
+        }
         if (!describe(plugin, h, fixed.channels, true))
             return fail(Status::channel_mismatch);
         const auto serve = [&](auto& server) {
@@ -493,10 +717,12 @@ int runPluginWorker(std::string_view mappingName) noexcept {
         };
         int code = 0;
         if (fixed.flags & 1) {
-            Server<double> server(h, memory.data, fixed, options, plugin, audioWake, controlWake);
+            Server<double> server(h, memory.data, fixed, options, plugin, audioWake, controlWake,
+                                  remoteHost, *provider, path);
             code = serve(server);
         } else {
-            Server<float> server(h, memory.data, fixed, options, plugin, audioWake, controlWake);
+            Server<float> server(h, memory.data, fixed, options, plugin, audioWake, controlWake,
+                                 remoteHost, *provider, path);
             code = serve(server);
         }
         if (plugin.lifecycle() == PluginLifecycle::processing)
