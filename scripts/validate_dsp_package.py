@@ -13,6 +13,7 @@ p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--build-dir', type=Path, required=True)
 p.add_argument('--cydsp-source', type=Path, default=ROOT.parent/'CyDSP')
 p.add_argument('--require-current-dynamics', action='store_true', help='Verify the newer Dynamics::minimumAppliedGain installed symbol')
+p.add_argument('--require-prepared-optimizations', action='store_true', help='Verify the b973c1b prepared/mixed DSP APIs and explicit quality defaults')
 p.add_argument('--cmake', default=r'C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe')
 a = p.parse_args()
 build = a.build_dir.resolve(strict=True)
@@ -24,7 +25,8 @@ folder = Path(tempfile.mkdtemp(prefix='dsp-package-'+tag+'-', dir=ROOT/'build'))
 source = folder/'consumer'
 source.mkdir()
 report = {'status': 'running', 'sourceSha256': source_digest(), 'dependency': dependency_fingerprint(a.cydsp_source),
-          'currentDynamicsRequired': a.require_current_dynamics,
+          'currentDynamicsRequired': a.require_current_dynamics or a.require_prepared_optimizations,
+          'preparedOptimizationsRequired': a.require_prepared_optimizations,
           'portAudio': portaudio, 'physicalDevices': False, 'folder': str(folder)}
 environment = {key.upper(): value for key, value in os.environ.items()}
 
@@ -43,15 +45,24 @@ find_package(CyAudioCore 0.1 CONFIG REQUIRED COMPONENTS Devices Files Sources Pl
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE CyAudioCore::CyAudioCore)
 ''', encoding='utf-8', newline='\n')
-if a.require_current_dynamics:
+if a.require_current_dynamics or a.require_prepared_optimizations:
     with (source/'CMakeLists.txt').open('a', encoding='utf-8', newline='\n') as generated:
         generated.write('target_compile_definitions(consumer PRIVATE EXPECT_CURRENT_DYNAMICS=1)\n')
+if a.require_prepared_optimizations:
+    with (source/'CMakeLists.txt').open('a', encoding='utf-8', newline='\n') as generated:
+        generated.write('target_compile_definitions(consumer PRIVATE EXPECT_PREPARED_OPTIMIZATIONS=1)\n')
 (source/'main.cpp').write_text('''#include <cyaudio/CyAudioCore.h>
 #include <cydsp/control/Quality.h>
 #include <cydsp/synthesis/Granulator.h>
 #include <cydsp/synthesis/SourceBatch.h>
 #include <cydsp/analysis/LevelMeter.h>
 #include <cydsp/processors/Dynamics.h>
+#if defined(EXPECT_PREPARED_OPTIMIZATIONS)
+#include <cydsp/processors/AdvancedDynamics.h>
+#include <cydsp/processors/Biquad.h>
+#include <cydsp/spatial/SpatialMath.h>
+#endif
+#include <cmath>
 #include <type_traits>
 static_assert(std::is_same_v<cyaudio::AudioBlock<float>,cydsp::AudioBlock<float>>);
 static_assert(std::is_same_v<cyaudio::Status,cydsp::Status>);
@@ -87,6 +98,48 @@ int main() {
         dynamics.process(input.block(),output.block())!=Status::ok ||
         dynamics.minimumAppliedGain()!=1) return 21;
     for (auto value : output.block().channel(0)) if (value!=.25f) return 22;
+#endif
+#if defined(EXPECT_PREPARED_OPTIMIZATIONS)
+    // Exercise the installed symbols through Core's public block aliases.
+    // With unity wet dynamics, dry=.5 and wet=.25 must produce .1875.
+    if (dynamics.processMixed(input.block(),output.block(),.5,.25)!=Status::ok ||
+        dynamics.minimumAppliedGain()!=1) return 23;
+    for (auto value : output.block().channel(0)) if (value!=.1875f) return 24;
+    cydsp::QualitySettings policy;
+    cydsp::SaturationParameters saturation;
+    cydsp::TransientParameters transient;
+    if (!saturation.antialias || saturation.math!=cydsp::MathAccuracy::precise ||
+        transient.math!=cydsp::MathAccuracy::precise) return 25;
+    for (auto profile : {cydsp::QualityProfile::realtimeHigh,cydsp::QualityProfile::offline}) {
+        if (cydsp::qualitySettings(profile,48000,policy)!=Status::ok ||
+            !policy.saturationAntialias || policy.saturationMath!=cydsp::MathAccuracy::precise ||
+            policy.transientMath!=cydsp::MathAccuracy::precise) return 26;
+    }
+    if (cydsp::qualitySettings(cydsp::QualityProfile::economy,48000,policy)!=Status::ok ||
+        policy.saturationAntialias || policy.saturationMath!=cydsp::MathAccuracy::fast ||
+        policy.transientMath!=cydsp::MathAccuracy::fast) return 27;
+    cydsp::TransientShaper<float> detector;
+    if (detector.prepare({48000,8,1})!=Status::ok ||
+        detector.processGain(input.block(),output.block())!=Status::ok) return 28;
+    for (auto value : output.block().channel(0)) if (value!=1.f) return 29;
+    cydsp::AdaaSaturator<float> mixed, reference;
+    cyaudio::AudioBuffer<float> wet;
+    if (wet.resize(1,8)!=Status::ok || mixed.prepare({48000,8,1})!=Status::ok ||
+        reference.prepare({48000,8,1})!=Status::ok ||
+        reference.process(input.block(),wet.block())!=Status::ok ||
+        mixed.processMixed(input.block(),output.block(),{},.5,.25)!=Status::ok) return 30;
+    for (std::size_t i=0;i<8;++i)
+        if (!std::isfinite(output.block().channel(0)[i]) ||
+            std::abs(output.block().channel(0)[i]-(.125f+.25f*wet.block().channel(0)[i]))>1e-6f) return 31;
+    cydsp::PeakingBiquadDesigner bell;
+    cydsp::BiquadCoefficients coefficients;
+    if (bell.prepare(48000,1000,.707)!=Status::ok ||
+        bell.designFor<float>(0,coefficients)!=Status::ok || !coefficients.isStable() ||
+        coefficients.b0!=1 || coefficients.b1!=coefficients.a1 ||
+        coefficients.b2!=coefficients.a2) return 32;
+    cydsp::DopplerPlan doppler;
+    double ratio=0;
+    if (doppler.prepare()!=Status::ok || doppler.ratio(0,0,ratio)!=Status::ok || ratio!=1) return 33;
 #endif
     cydsp::DspBus bus{1,1};
     cydsp::DspConnection route{cydsp::graphInputNode,1,cydsp::graphOutputNode,1,1};

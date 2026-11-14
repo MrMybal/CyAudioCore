@@ -39,7 +39,7 @@ The application chooses its GUI and may use CyUI. Shared buffers, types and opti
 
 Build the static archives for the target ABI using CMake 3.24+ and a C++20 compiler. CyAudioCore requires CyDSP 0.2.0. See the [migration guide](docs/Migration.fr.md).
 
-Currently validated CyDSP revision: `ea56508`. See the [dependency and archive update](docs/CyDSPCurrent.fr.md).
+Currently validated CyDSP revision: `b973c1b`. See the [dependency and archive update](docs/CyDSPCurrent.fr.md).
 
 ```cmake
 find_package(CyAudioCore 0.1 CONFIG REQUIRED)
