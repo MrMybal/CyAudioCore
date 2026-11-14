@@ -82,19 +82,16 @@ Windows x64, MSVC 19.40, Release :
 | Build principal statique, compilation indépendante des headers Core | Réussi |
 | Régressions complètes Core et DSP indépendantes, PortAudio ON | Réussi |
 | Régressions Core avec AddressSanitizer, DSP instrumenté | Réussi |
-| Suite DSP indépendante avec AddressSanitizer | Lancement impossible, voir ci-dessous |
+| Suite DSP indépendante avec AddressSanitizer | Non exécutée : binaire supprimé par l'antivirus local |
 | Headers publics indépendants Core et DSP dans les builds de validation | Réussi |
 | Consommateurs installés puis déplacés, PortAudio ON et OFF | Réussi |
 | Nouveaux symboles préparés/mixage, rendus et politiques de précision dans les deux consommateurs | Réussi |
 
 La compilation instrumentée complète réussit et les régressions Core passent.
-La suite DSP indépendante instrumentée n'a pas pu démarrer : son exécutable
-`cydsp_tests.exe` disparaît après sa liaison. Une reconstruction identique donne
-d'abord un fichier présent, puis le lancement échoue avec `WinError 32` (fichier
-utilisé), après un premier échec `WinError 2` (fichier introuvable). La cause n'est
-pas confirmée. Les deux tentatives sont conservées sous
-`build/cydsp-update-b973c1b` et le rapport global ASan reste en échec ; ce contrôle
-DSP indépendant n'est donc pas revendiqué comme réussi.
+La suite DSP indépendante instrumentée n'a pas pu démarrer : l'antivirus local
+supprime son exécutable `cydsp_tests.exe`, ce que le propriétaire a confirmé.
+Les deux tentatives sont conservées sous `build/cydsp-update-b973c1b` et le
+rapport global ASan garde son échec de lancement. Cette suite reste non exécutée.
 
 Les contrôles indépendants emploient une archive locale figée du même commit ;
 l'empreinte des entrées compilées correspond à celle du checkout utilisé pour
