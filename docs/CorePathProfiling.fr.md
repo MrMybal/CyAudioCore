@@ -175,17 +175,22 @@ global reste à confirmer dans le chat chargé de CyDAW.
 Les chemins ci-dessous sont relatifs à la racine Core ; `../CyDSP` et
 `../CyDAW_Project` sont consultés en lecture seule. Aucune dépendance n'est
 téléchargée. Le pilote crée une archive du commit DSP indiqué sous `build`.
+Pour la campagne d'origine, employer aussi le Core témoin `2e954fa`, avant le
+correctif du transport ; une nouvelle exécution sur le Core courant mesure ce
+correctif et les autres changements ultérieurs.
 
 ```sh
 # Construction seule : aucune campagne de chronométrage implicite.
-python scripts/profile_core_paths.py
+python scripts/profile_core_paths.py --dependency-commit fda6bd30c5b622795cc08e8bd2750188a6c5a0c0
 
 # Mesures Core et probe facultatif du header applicatif.
-python scripts/profile_core_paths.py --daw-source ../CyDAW_Project --run --trials 5
+python scripts/profile_core_paths.py --dependency-commit fda6bd30c5b622795cc08e8bd2750188a6c5a0c0 --daw-source ../CyDAW_Project --run --trials 5
 ```
 
 `--dependency-commit` et `--cydsp-source` sélectionnent explicitement la référence
-locale ; `--cmake` permet de préciser l'outil installé. Le pilote est prévu pour
+locale ; `--cmake` permet de préciser l'outil installé. La révision locale
+courante est utilisée par défaut ; les commandes ci-dessus figent la référence
+historique de ce rapport. Le pilote est prévu pour
 Windows/MSVC avec les fixtures activées. Les cibles CMake
 `cyaudio_path_measurements` et `cyaudio_worker_measurements` nécessitent
 `CYAUDIOCORE_BUILD_PATH_MEASUREMENTS=ON` (OFF par défaut), Devices et Plugins.

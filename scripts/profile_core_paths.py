@@ -15,7 +15,7 @@ from reporting import source_digest
 ROOT=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--cydsp-source',type=Path,default=ROOT.parent/'CyDSP')
-parser.add_argument('--dependency-commit',default='fda6bd30c5b622795cc08e8bd2750188a6c5a0c0')
+parser.add_argument('--dependency-commit',default='HEAD',help='Local CyDSP revision to snapshot; defaults to its current committed HEAD')
 parser.add_argument('--daw-source',type=Path)
 parser.add_argument('--trials',type=int,default=5)
 parser.add_argument('--run',action='store_true',help='Explicitly execute measurements after building')
@@ -24,6 +24,11 @@ a=parser.parse_args()
 if a.trials<3: parser.error('at least three fresh-process trials required')
 folder=ROOT/'build/core-path-profile'
 folder.mkdir(parents=True,exist_ok=True)
+if (folder/'results.json').exists():
+    previous=folder/('previous-'+str(time.time_ns())); previous.mkdir()
+    for path in [folder/'results.json',folder/'inputs.json',*folder.glob('attempt-*.log')]:
+        if path.exists(): shutil.copy2(path,previous/path.name)
+    (folder/'results.json').unlink() # A build-only update must not expose stale timings as current.
 environment={key.upper():value for key,value in os.environ.items()}
 
 def git(root,*args):
@@ -112,10 +117,6 @@ def background():
     return value if isinstance(value,list) else [value]
 
 background_samples=[]
-if (folder/'results.json').exists():
-    previous=folder/('previous-'+str(time.time_ns())); previous.mkdir()
-    for path in [folder/'results.json',folder/'inputs.json',*folder.glob('attempt-*.log')]:
-        if path.exists(): shutil.copy2(path,previous/path.name)
 attempt=0
 while len(trials)<a.trials:
     attempt+=1

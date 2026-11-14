@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 p = argparse.ArgumentParser(description=__doc__)
 p.add_argument('--build-dir', type=Path, required=True)
 p.add_argument('--cydsp-source', type=Path, default=ROOT.parent/'CyDSP')
+p.add_argument('--require-current-dynamics', action='store_true', help='Verify the newer Dynamics::minimumAppliedGain installed symbol')
 p.add_argument('--cmake', default=r'C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe')
 a = p.parse_args()
 build = a.build_dir.resolve(strict=True)
@@ -23,6 +24,7 @@ folder = Path(tempfile.mkdtemp(prefix='dsp-package-'+tag+'-', dir=ROOT/'build'))
 source = folder/'consumer'
 source.mkdir()
 report = {'status': 'running', 'sourceSha256': source_digest(), 'dependency': dependency_fingerprint(a.cydsp_source),
+          'currentDynamicsRequired': a.require_current_dynamics,
           'portAudio': portaudio, 'physicalDevices': False, 'folder': str(folder)}
 environment = {key.upper(): value for key, value in os.environ.items()}
 
@@ -41,11 +43,15 @@ find_package(CyAudioCore 0.1 CONFIG REQUIRED COMPONENTS Devices Files Sources Pl
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE CyAudioCore::CyAudioCore)
 ''', encoding='utf-8', newline='\n')
+if a.require_current_dynamics:
+    with (source/'CMakeLists.txt').open('a', encoding='utf-8', newline='\n') as generated:
+        generated.write('target_compile_definitions(consumer PRIVATE EXPECT_CURRENT_DYNAMICS=1)\n')
 (source/'main.cpp').write_text('''#include <cyaudio/CyAudioCore.h>
 #include <cydsp/control/Quality.h>
 #include <cydsp/synthesis/Granulator.h>
 #include <cydsp/synthesis/SourceBatch.h>
 #include <cydsp/analysis/LevelMeter.h>
+#include <cydsp/processors/Dynamics.h>
 #include <type_traits>
 static_assert(std::is_same_v<cyaudio::AudioBlock<float>,cydsp::AudioBlock<float>>);
 static_assert(std::is_same_v<cyaudio::Status,cydsp::Status>);
@@ -71,6 +77,17 @@ int main() {
         transport.process(output.block())!=Status::ok) return 19;
     for (std::size_t i=0;i<8;++i)
         if (output.block().channel(0)[i]!=(i<2?.25f:0.f)) return 20;
+#if defined(EXPECT_CURRENT_DYNAMICS)
+    cydsp::Dynamics<float> dynamics;
+    cydsp::DynamicsParameters parameters;
+    parameters.thresholdDb=0; parameters.kneeDb=0;
+    parameters.attackMs=0; parameters.releaseMs=0;
+    if (dynamics.prepare({48000,8,1})!=Status::ok ||
+        dynamics.setParameters(parameters)!=Status::ok ||
+        dynamics.process(input.block(),output.block())!=Status::ok ||
+        dynamics.minimumAppliedGain()!=1) return 21;
+    for (auto value : output.block().channel(0)) if (value!=.25f) return 22;
+#endif
     cydsp::DspBus bus{1,1};
     cydsp::DspConnection route{cydsp::graphInputNode,1,cydsp::graphOutputNode,1,1};
     cydsp::MultiBusGraph<float> graph;

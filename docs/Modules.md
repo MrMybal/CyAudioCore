@@ -12,6 +12,9 @@
 Every target consumes public CyDSP declarations. The application chooses its UI,
 thread scheduling, plugin isolation policy and filesystem/device access.
 
+See the [current validated CyDSP dependency](CyDSPCurrent.fr.md) for its revision,
+archive rebuild and package compatibility checks.
+
 See [migration](Migration.fr.md), [plugins](Plugins.md), [MIDI2](Midi2.md),
 [property exchange](CiProperty.md), [DAW contracts](DawIntegration.md),
 [coverage](Coverage.md), [licensing](Licensing.md) and [validation](Validation.md).

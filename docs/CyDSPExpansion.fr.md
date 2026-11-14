@@ -1,5 +1,8 @@
 # Prise en compte de l'extension CyDSP — 13 novembre 2026
 
+La [référence CyDSP courante](CyDSPCurrent.fr.md) couvre les optimisations et la
+reconstruction ultérieures. Ce document conserve le bilan de l'extension.
+
 Révision examinée : `cc18dca043925b75adea481c1c8545a125607e1f`, après la
 [précédente adaptation wavetable](CyDSPUpdate.md) à `6c48a3f`.
 CyDSP conserve sa version 0.2.0 et ses cibles statiques `CyDSP::CyDSP` et
