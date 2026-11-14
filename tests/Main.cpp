@@ -1,4 +1,5 @@
 #include <cyaudio/CyAudioCore.h>
+#include <cstring>
 #include <iostream>
 #include <stdexcept>
 void ciPropertyRegression(); void ciAdvancedRegression(); void dawMidiRegression();
@@ -23,32 +24,68 @@ void pluginRegression(const std::filesystem::path&); void openPluginRegression(c
 void vstStateRegression(const std::filesystem::path&);
 void vstPluginRegression(const std::filesystem::path&); void pluginWorkerRegression(const std::filesystem::path&);
 #endif
-int main(int, char** argv) {
- try {
-  ciPropertyRegression(); ciAdvancedRegression(); dawMidiRegression(); midi2ProtocolRegression();
-  dawRegression(); midiProtocolRegression(); instrumentRegression();
-  synthWavetableRegression();
-  dspCompositionRegression();
+namespace {
+// Suites run in this order. Names are the command-line selectors and the CTest entries.
+struct Suite {
+ const char* name;
+ void (*run)(const std::filesystem::path&);
+};
+template <void (*F)()> void plain(const std::filesystem::path&) { F(); }
+const Suite suites[] = {
+ {"ciProperty", &plain<&ciPropertyRegression>}, {"ciAdvanced", &plain<&ciAdvancedRegression>},
+ {"dawMidi", &plain<&dawMidiRegression>}, {"midi2Protocol", &plain<&midi2ProtocolRegression>},
+ {"daw", &plain<&dawRegression>}, {"midiProtocol", &plain<&midiProtocolRegression>},
+ {"instrument", &plain<&instrumentRegression>}, {"synthWavetable", &plain<&synthWavetableRegression>},
+ {"dspComposition", &plain<&dspCompositionRegression>},
 #if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
-  audioProviderRegression();
+ {"audioProvider", &plain<&audioProviderRegression>},
 #if CYAUDIOCORE_WITH_PORTAUDIO
-  portAudioRegression();
+ {"portAudio", &plain<&portAudioRegression>},
 #endif
 #endif
 #if defined(CYAUDIOCORE_TEST_IO)
-  midi2NativeRegression(); deviceContractsRegression(); midiInputContractsRegression();
-  pcmProxyRegression(); metadataRegression(); dawFilesRegression(); ioRegression();
+ {"midi2Native", &plain<&midi2NativeRegression>}, {"deviceContracts", &plain<&deviceContractsRegression>},
+ {"midiInputContracts", &plain<&midiInputContractsRegression>}, {"pcmProxy", &plain<&pcmProxyRegression>},
+ {"metadata", &plain<&metadataRegression>}, {"dawFiles", &plain<&dawFilesRegression>}, {"io", &plain<&ioRegression>},
 #endif
 #if defined(CYAUDIOCORE_TEST_SOURCES)
-  sourcesRegression(); sourcePolicyRegression();
+ {"sources", &plain<&sourcesRegression>}, {"sourcePolicy", &plain<&sourcePolicyRegression>},
 #endif
 #if defined(CYAUDIOCORE_TEST_PLUGINS)
-  const auto directory=std::filesystem::absolute(argv[0]).parent_path();
-  pluginRegression(directory); openPluginRegression(directory); vstPluginRegression(directory); vstStateRegression(directory); pluginWorkerRegression(directory);
-#else
-  (void)argv;
+ {"plugin", &pluginRegression}, {"openPlugin", &openPluginRegression}, {"vstPlugin", &vstPluginRegression},
+ {"vstState", &vstStateRegression}, {"pluginWorker", &pluginWorkerRegression},
 #endif
-  std::cout << "PASS independent CyAudioCore services/plugins/IPC/states/realtime\n";
-  return 0;
- } catch(const std::exception& e) { std::cerr << "FAIL: " << e.what() << '\n'; return 1; }
+};
+}
+// No argument: every suite, stopping at the first failure (unchanged behaviour).
+// Suite names select suites; --keep-going runs the rest after a failure; --list prints the names.
+int main(int argc, char** argv) {
+ bool keepGoing = false, selected = false;
+ for (int i = 1; i < argc; ++i) {
+  if (!std::strcmp(argv[i], "--list")) {
+   for (const auto& suite : suites) std::cout << suite.name << '\n';
+   return 0;
+  }
+  if (!std::strcmp(argv[i], "--keep-going")) { keepGoing = true; continue; }
+  bool known = false;
+  for (const auto& suite : suites) known = known || !std::strcmp(argv[i], suite.name);
+  if (!known) { std::cerr << "FAIL: unknown suite " << argv[i] << '\n'; return 2; }
+  selected = true;
+ }
+ const auto directory = std::filesystem::absolute(argv[0]).parent_path();
+ unsigned failures = 0;
+ for (const auto& suite : suites) {
+  bool wanted = !selected;
+  for (int i = 1; i < argc && !wanted; ++i) wanted = !std::strcmp(argv[i], suite.name);
+  if (!wanted) continue;
+  try { suite.run(directory); }
+  catch (const std::exception& e) {
+   std::cerr << "FAIL: " << suite.name << ": " << e.what() << '\n';
+   ++failures;
+   if (!keepGoing) return 1;
+  }
+ }
+ if (failures) { std::cerr << "FAIL: " << failures << " suite(s)\n"; return 1; }
+ if (!selected) std::cout << "PASS independent CyAudioCore services/plugins/IPC/states/realtime\n";
+ return 0;
 }

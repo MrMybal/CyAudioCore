@@ -26,6 +26,8 @@ struct MidiConnectionDriver {
     Status (*send)(void*, const MidiConnectionMessage&) noexcept = nullptr;
     Status (*health)(void*) noexcept = nullptr;
 };
+// queuedMessages bounds the collector and the outgoing UMP/channel messages; outgoing
+// SysEx (more than 3 bytes) waits in its own queue of min(queuedMessages, 64) messages.
 struct MidiReconnectOptions {
     std::uint64_t scanIntervalMs = 250, retryIntervalMs = 1000;
     std::size_t queuedMessages = 1024, maximumReadPerPoll = 256;
@@ -39,6 +41,9 @@ struct MidiConnectionCallbacks {
 // and outgoing SPSC allow collect/send on one audio thread during reconnection.
 // On disconnect, old-epoch work is discarded; host silences any held voices when
 // it observes a changed generation/connected flag. No hidden polling thread.
+// poll drops a malformed/oversized inbound message, keeps reading and still services the
+// output queue; the first such status is returned once the turn is complete. A driver read
+// may report an empty input as would_block or end_of_stream.
 class MidiConnection {
   public:
     MidiConnection();

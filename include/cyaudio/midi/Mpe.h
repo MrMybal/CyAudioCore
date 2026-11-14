@@ -50,6 +50,9 @@ class MpeInstrument {
     std::array<Channel, 16> channels_{};
     std::array<std::array<MpeNote, 128>, 16> notes_{};
     std::array<std::array<std::uint16_t, 128>, 16> sostenuto_{};
+    // One bit per sounding note, so note-off/pedal/expression visit only those notes
+    // (in ascending key order) instead of all 128 keys of every channel concerned.
+    std::array<std::array<std::uint64_t, 2>, 16> active_{};
     MidiParameterParser parameters_;
     unsigned lower_ = 15, upper_ = 0;
     std::uint64_t serial_ = 0;

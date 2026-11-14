@@ -43,7 +43,19 @@ template <Sample T> void run() {
     }
     Wavetable<T> table;
     require(table.prepare(cycle, backend) == Status::ok);
-    for (bool wavetable : {false, true})
+    // One second of looped stereo material: notes 36.. span playback ratios 0.25 to about 4,
+    // so the sampler reads its native level and several mip levels.
+    AudioBuffer<T> recording;
+    require(recording.resize(2, 48000) == Status::ok);
+    for (std::size_t i = 0; i < 48000; ++i) {
+        const auto phase = 2 * std::numbers::pi * double(i) / 48000;
+        recording.block().channel(0)[i] = static_cast<T>(.5 * std::sin(220 * phase) + .25 * std::sin(1760 * phase));
+        recording.block().channel(1)[i] = static_cast<T>(.5 * std::sin(330 * phase) + .25 * std::sin(2640 * phase));
+    }
+    SampleData<T> sample;
+    require(sample.prepare(recording.block(), 48000, 60, backend) == Status::ok);
+    require(sample.setLoop(1000, 40000, 256) == Status::ok);
+    for (int source : {0, 1, 2})
         for (std::size_t frames : {32u, 128u, 512u})
             for (std::size_t voices : {16u, 64u}) {
                 AudioBuffer<T> output;
@@ -53,7 +65,8 @@ template <Sample T> void run() {
                 SynthParameters p;
                 p.envelope = {0, 0, 1, .1};
                 require(synth.setParameters(p) == Status::ok);
-                if (wavetable) require(synth.setWavetable(&table) == Status::ok);
+                if (source == 1) require(synth.setWavetable(&table) == Status::ok);
+                if (source == 2) require(synth.setSample(&sample) == Status::ok);
                 MidiBuffer notes;
                 require(notes.prepare(voices, voices * 3) == Status::ok);
                 for (std::size_t i = 0; i < voices; ++i) {
@@ -61,7 +74,7 @@ template <Sample T> void run() {
                     require(notes.add(0, note.bytes()) == Status::ok);
                 }
                 require(synth.process(output.block(), &notes) == Status::ok);
-                bench(wavetable ? "wavetable" : "oscillator", type, backend, voices, frames, [&] {
+                bench(source == 2 ? "sampler" : source == 1 ? "wavetable" : "oscillator", type, backend, voices, frames, [&] {
                     require(synth.process(output.block()) == Status::ok);
                     sink = output.block().channel(0).back();
                 });

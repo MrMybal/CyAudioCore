@@ -40,6 +40,9 @@ template <Sample T> class Synthesizer {
     Status prepare(const ProcessSpec&, std::size_t voices = 64,
                    CpuBackend = CpuBackend::automatic) noexcept;
     Status setParameters(const SynthParameters&) noexcept;
+    // A prepared synthesizer starts as an MPE lower zone with 15 member channels:
+    // channel 1 is the manager and its bend, volume and pan apply to every voice.
+    // Call setMpeZones(0, 0) for conventional independent MIDI channels.
     Status setMpeZones(unsigned lowerMembers, unsigned upperMembers) noexcept;
     // Configuration and sample lifetime are control-thread responsibilities; voices must be idle.
     Status setSample(const SampleData<T>*) noexcept;

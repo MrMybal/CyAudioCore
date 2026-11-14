@@ -122,9 +122,11 @@ Status parseCiDiscovery(const CiMessageView& m, CiDiscovery& out) noexcept {
     d.identity.family = static_cast<std::uint16_t>(get(b.subspan(3, 2)));
     d.identity.model = static_cast<std::uint16_t>(get(b.subspan(5, 2)));
     std::copy_n(b.begin() + 7, 4, d.identity.revision.begin());
-    d.categories = b[11];
+    // Reserved category bits of a received Discovery are ignored; makeCiDiscoveryBody
+    // still refuses to send them.
+    d.categories = static_cast<std::uint8_t>(b[11] & ~0x61u);
     d.maximumSysExBytes = get(b.subspan(12, 4));
-    if (d.maximumSysExBytes < 128 || (d.categories & 0x61))
+    if (d.maximumSysExBytes < 128)
         return Status::invalid_argument;
     if (m.version >= 2) {
         d.outputPath = b[16];
@@ -335,7 +337,10 @@ struct MidiCiDevice::State {
     std::uint32_t muid = 0;
     std::uint64_t random = 1, clock = 0;
     std::vector<CiPeer> peers;
+    std::vector<std::uint64_t> seen; // Parallel to peers: order of the last message received.
     std::size_t peerCount = 0;
+    std::uint64_t stamp = 0;
+    unsigned nextRequest = 0; // Round-robin start for request IDs: a just-retired ID rests.
     std::vector<CiProfile> profiles;
     std::vector<Pending> pending;
     struct Transfer {
@@ -447,6 +452,7 @@ struct MidiCiDevice::State {
                 if (callbacks.peer)
                     callbacks.peer(callbacks.context, peers[i], true);
                 peers[i] = peers[--peerCount];
+                seen[i] = seen[peerCount];
             } else
                 ++i;
         assembler.invalidate(id);
@@ -456,6 +462,13 @@ struct MidiCiDevice::State {
         for (auto& p : pending)
             if (p.destination == id)
                 p.active = false;
+    }
+    // Our MUID changed or was invalidated: every cached peer goes, with its notification.
+    void forgetPeers() noexcept {
+        for (std::size_t i = 0; i < peerCount; ++i)
+            if (callbacks.peer)
+                callbacks.peer(callbacks.context, peers[i], true);
+        peerCount = 0;
     }
     void cancelRequest(std::uint32_t peer, std::uint8_t id) noexcept {
         for (auto& p : pending)
@@ -515,6 +528,7 @@ Status MidiCiDevice::prepare(const CiConfiguration& c, CiCallbacks callbacks,
             next->random = 1;
         next->muid = validCiMuid(c.muid) ? c.muid : next->fresh();
         next->peers.resize(c.peers);
+        next->seen.resize(c.peers);
         next->profiles.assign(profiles.begin(), profiles.end());
         next->tx.resize(c.discovery.maximumSysExBytes - 2);
         next->body.resize(c.discovery.maximumSysExBytes - 15);
@@ -617,20 +631,26 @@ Status MidiCiDevice::requestProperty(std::uint32_t dest, std::uint8_t type,
         std::find_if(s.pending.begin(), s.pending.end(), [](const auto& p) { return !p.active; });
     if (slot == s.pending.end())
         return Status::update_queue_full;
-    unsigned chosen = 0;
-    for (; chosen < 128; ++chosen)
+    // Round-robin: a retired ID is not reused until the others were, so a late or
+    // duplicated reply to an abandoned request cannot be taken for the next one.
+    unsigned chosen = 128;
+    for (unsigned n = 0; n < 128 && chosen == 128; ++n) {
+        const auto candidate = (s.nextRequest + n) % 128;
         if (std::none_of(s.pending.begin(), s.pending.end(), [&](const auto& p) {
-                return p.active && p.destination == dest && p.request == chosen;
+                return p.active && p.destination == dest && p.request == candidate;
             }))
-            break;
+            chosen = candidate;
+    }
     if (chosen == 128)
         return Status::update_queue_full;
     *slot = {dest, now, static_cast<std::uint8_t>(chosen), type, true};
     auto r = sendProperty(dest, type, static_cast<std::uint8_t>(chosen), h, d);
     if (r != Status::ok)
         slot->active = false;
-    else
+    else {
         id = static_cast<std::uint8_t>(chosen);
+        s.nextRequest = (chosen + 1) % 128;
+    }
     return r;
 }
 Status MidiCiDevice::process(std::span<const std::uint8_t> bytes, std::uint64_t now) noexcept {
@@ -661,10 +681,7 @@ Status MidiCiDevice::process(std::span<const std::uint8_t> bytes, std::uint64_t 
         auto target = get(m.body.first(4));
         s.remove(target);
         if (target == s.muid) {
-            for (std::size_t i = 0; i < s.peerCount; ++i)
-                if (s.callbacks.peer)
-                    s.callbacks.peer(s.callbacks.context, s.peers[i], true);
-            s.peerCount = 0;
+            s.forgetPeers();
             s.assembler.reset();
             for (auto& p : s.pending)
                 p.active = false;
@@ -684,12 +701,17 @@ Status MidiCiDevice::process(std::span<const std::uint8_t> bytes, std::uint64_t 
         s.muid = s.fresh();
         for (auto& t : s.transfers)
             t.active = false;
-        s.peerCount = 0;
+        s.forgetPeers();
         s.assembler.reset();
         for (auto& p : s.pending)
             p.active = false;
         return s.discovery(false, ciBroadcastMuid);
     }
+    for (std::size_t i = 0; i < s.peerCount; ++i)
+        if (s.peers[i].muid == m.source) {
+            s.seen[i] = ++s.stamp;
+            break;
+        }
     if (m.type == 0x70 || m.type == 0x71) {
         CiDiscovery d;
         r = parseCiDiscovery(m, d);
@@ -699,11 +721,18 @@ Status MidiCiDevice::process(std::span<const std::uint8_t> bytes, std::uint64_t 
                                   s.peers.begin() + static_cast<std::ptrdiff_t>(s.peerCount),
                                   [&](const auto& p) { return p.muid == m.source; });
         if (found == s.peers.begin() + static_cast<std::ptrdiff_t>(s.peerCount)) {
-            if (s.peerCount == s.peers.size())
-                return Status::update_queue_full;
-            found = s.peers.begin() + static_cast<std::ptrdiff_t>(s.peerCount++);
+            if (s.peerCount == s.peers.size()) {
+                // Peers leave silently when unplugged: a full cache evicts the least recently
+                // seen entry rather than ignoring every later device (and its Discovery).
+                const auto oldest = std::min_element(s.seen.begin(), s.seen.end()) - s.seen.begin();
+                found = s.peers.begin() + oldest;
+                if (s.callbacks.peer)
+                    s.callbacks.peer(s.callbacks.context, *found, true);
+            } else
+                found = s.peers.begin() + static_cast<std::ptrdiff_t>(s.peerCount++);
         }
         *found = {m.source, d, m.version};
+        s.seen[static_cast<std::size_t>(found - s.peers.begin())] = ++s.stamp;
         if (s.callbacks.peer)
             s.callbacks.peer(s.callbacks.context, *found, false);
         return m.type == 0x70 ? s.discovery(true, m.source, d.outputPath) : Status::ok;

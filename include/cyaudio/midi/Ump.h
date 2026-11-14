@@ -23,6 +23,12 @@ struct UmpPacket {
     [[nodiscard]] Status toBytes(std::span<std::uint8_t>, std::size_t&) const noexcept;
 };
 [[nodiscard]] unsigned umpWordCount(unsigned type) noexcept;
+// Receive-side acceptance. Senders must zero reserved fields, which valid() enforces;
+// receivers must ignore them. This clears exactly the reserved fields valid() tests and
+// returns whether the packet is then valid: word count, status and data ranges still
+// apply. UmpStreamParser, UmpSysExAssembler, MidiEventCollector::pushUmp and
+// Midi2Controllers::process accept device packets this way.
+[[nodiscard]] bool umpAcceptReceived(UmpPacket&) noexcept;
 using UmpCallback = void (*)(void*, const UmpPacket&) noexcept;
 class UmpStreamParser {
   public:
@@ -80,6 +86,9 @@ class UmpBuffer {
 [[nodiscard]] std::uint32_t midiScale7To32(unsigned value) noexcept;
 [[nodiscard]] std::uint16_t midiScale7To16(unsigned value) noexcept;
 // Precision loss is explicit; unsupported per-note/controllers return unsupported_format.
+// That includes the compound MIDI 1 controllers 0, 6, 32, 38 and 96-101 (bank select, data
+// entry, RPN/NRPN selection), which MIDI 2 replaces by atomic messages: use umpProgram with
+// a bank and umpParameter once the host has assembled them (see MidiParameterParser).
 Status midi1ToMidi2(const UmpPacket&, UmpPacket&) noexcept;
 Status midi2ToMidi1(const UmpPacket&, ShortMidiMessage&) noexcept;
 // SysEx payload excludes F0/F7. State is 0 complete,1 start,2 continue,3 end.

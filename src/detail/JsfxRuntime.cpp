@@ -1,4 +1,5 @@
-// CyDSP adaptation: bounded VM preparation and sparse-slider state correction.
+// CyDSP adaptation: bounded VM preparation, sparse-slider state correction, and no
+// @init scheduled from the transport on the processing path.
 // Original Apache-2.0 and embedded notices: third_party/licenses/ysfx.txt
 // Copyright 2021 Jean Pierre Cimalando
 //
@@ -988,18 +989,14 @@ void ysfx_update_slider_visibility_mask(ysfx_t *fx)
 
 void ysfx_set_time_info(ysfx_t *fx, const ysfx_time_info_t *info)
 {
-    uint32_t prev_state = (uint32_t)*fx->var.play_state;
     uint32_t new_state = info->playback_state;
 
-    // unless `ext_noinit`, we should call @init every transport restart
-    if (!*fx->var.ext_noinit) {
-        auto is_running = [](uint32_t state) {
-            return state == ysfx_playback_playing ||
-                state == ysfx_playback_recording;
-        };
-        if (!is_running(prev_state) && is_running(new_state))
-            fx->must_compute_init = true;
-    }
+    // CyDSP adaptation: upstream schedules @init here on every transport restart
+    // (unless `ext_noinit`), which made the next process call run ysfx_init on the
+    // audio thread: it locks the file list, destroys open file objects and discards
+    // restored @serialize state. @init now runs only from control operations
+    // (load, sample-rate/block-size changes, explicit ysfx_init); a host that wants
+    // the restart behaviour reactivates the effect from its control thread.
 
     *fx->var.tempo = info->tempo;
     *fx->var.play_state = (EEL_F)new_state;

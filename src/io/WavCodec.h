@@ -1,4 +1,6 @@
 // CyDSP RIFF metadata bounds/preservation adaptation; third_party/licenses/choc.txt
+// CyAudioCore changes: exact integer PCM conversion, write-failure reporting, tolerant
+// (still bounded) chunk parsing, byte-exact legacy text chunks, RF64 ds64 details.
 //
 //    ██████ ██   ██  ██████   ██████
 //   ██      ██   ██ ██    ██ ██            ** Classy Header-Only Classes **
@@ -96,7 +98,7 @@ struct CyDSPWavFormat<supportWriting>::Implementation
                 auto chunk = readChunkType();
 
                 if (chunk == "RIFF") { readMainChunk (readChunkRange(), false); return true; }
-                if (chunk == "RF64") { readMainChunk (readChunkRange (true), true);  return true; }
+                if (chunk == "RF64") { readMainChunk (readChunkRange(), true);  return true; }
             }
             catch (...) {}
 
@@ -141,23 +143,23 @@ struct CyDSPWavFormat<supportWriting>::Implementation
 
                 seek (dataChunk.start + frameIndex * frameStride);
 
-                const uint32_t rawDataSize = 2048;
-                alignas (double) char rawData[rawDataSize];
-                const uint32_t rawDataFrames = rawDataSize / frameStride;
+                // CyAudioCore: one retained block (many frames per stream call at any channel count).
+                auto* const rawData = rawBuffer.data();
+                const auto rawDataFrames = static_cast<uint32_t> (rawBuffer.size() / frameStride);
 
                 while (numFrames != 0)
                 {
-                    namespace sd = choc::audio::sampledata;
                     auto framesToDo = std::min (rawDataFrames, numFrames);
                     stream->read (rawData, static_cast<std::streamsize> (framesToDo * frameStride));
                     auto dest = buffer.getStart (framesToDo);
 
                     switch (properties.bitDepth)
                     {
-                        case BitDepth::int8:    sd::copyFromInterleavedIntData<sd::UInt8>             (dest, rawData, sampleStride); break;
-                        case BitDepth::int16:   sd::copyFromInterleavedIntData<sd::Int16LittleEndian> (dest, rawData, sampleStride); break;
-                        case BitDepth::int24:   sd::copyFromInterleavedIntData<sd::Int24LittleEndian> (dest, rawData, sampleStride); break;
-                        case BitDepth::int32:   sd::copyFromInterleavedIntData<sd::Int32LittleEndian> (dest, rawData, sampleStride); break;
+                        // CyAudioCore: exact x / 2^(bits-1) normalisation (see decodeIntegers).
+                        case BitDepth::int8:
+                        case BitDepth::int16:
+                        case BitDepth::int24:
+                        case BitDepth::int32:   decodeIntegers (dest, rawData, sampleStride); break;
 
                         case BitDepth::float32:
                         {
@@ -208,57 +210,118 @@ struct CyDSPWavFormat<supportWriting>::Implementation
                     throwFormatException();
 
                 mainChunkRange.length = readInt<uint64_t>();
-                dataChunk.length = readInt<uint64_t>();
+                ds64DataSize = readInt<uint64_t>();
                 seek (chunkRange.getNextChunkStart());
             }
 
-            if (mainChunkRange.start > streamEndPosition ||
-                mainChunkRange.length > streamEndPosition - mainChunkRange.start)
+            // CyAudioCore tolerance for benign real-world deviations. Every range stays
+            // bounded by the stream: a declared RIFF size beyond the end (truncated or
+            // still-growing file) is clamped, never trusted.
+            if (mainChunkRange.start > streamEndPosition)
                 throwFormatException();
+            mainChunkRange.length = std::min (mainChunkRange.length, streamEndPosition - mainChunkRange.start);
+            const auto mainEnd = mainChunkRange.getEnd();
             bool foundFormat = false, foundData = false;
             uint64_t metadataBytes = 0;
             uint32_t chunks = 0;
-            while (getPosition() < mainChunkRange.getEnd())
+            while (getPosition() < mainEnd)
             {
-                if (++chunks > 65536 || mainChunkRange.getEnd() - getPosition() < 8)
-                    throwFormatException();
+                if (mainEnd - getPosition() < 8) break; // Trailing bytes that cannot hold a header.
+                if (++chunks > 65536) throwFormatException();
                 auto type = readChunkType();
-                auto chunkRange = readChunkRange (isRF64);
-                if (isRF64 && type == "data")
-                    chunkRange.length = dataChunk.length;
-                if (chunkRange.start > mainChunkRange.getEnd() ||
-                    chunkRange.length > mainChunkRange.getEnd() - chunkRange.start ||
-                    (chunkRange.length & 1u) > mainChunkRange.getEnd() - chunkRange.getEnd())
-                    throwFormatException();
-                const auto minimum = type == "fmt " ? 16u : type == "bext" ? 602u :
-                    type == "smpl" ? 36u : type == "cue " || type == "LIST" ? 4u :
-                    type == "inst" || type == "INST" ? 7u : type == "acid" ? 24u : 0u;
-                if (chunkRange.length < minimum) throwFormatException();
-                if (type == "fmt ") { if (foundFormat) throwFormatException(); foundFormat = true; }
-                else if (type == "data") { if (foundData) throwFormatException(); foundData = true; }
-                else if (type != "JUNK") {
-                    metadataBytes += chunkRange.length;
-                    if (metadataBytes > 33554432) throwFormatException();
+                auto chunkRange = readChunkRange();
+                // EBU 3306: the ds64 size replaces only a 0xffffffff placeholder.
+                if (isRF64 && type == "data" && chunkRange.length == 0xffffffffu)
+                    chunkRange.length = ds64DataSize;
+                const bool truncated = chunkRange.length > mainEnd - chunkRange.start;
+
+                if (type == "fmt ")
+                {
+                    if (foundFormat || truncated || chunkRange.length < 16) throwFormatException();
+                    foundFormat = true;
+                    readChunk_fmt (chunkRange);
+                    if (getPosition() > chunkRange.getEnd()) throwFormatException();
+                }
+                else if (type == "data")
+                {
+                    if (foundData) throwFormatException();
+                    foundData = true;
+                    if (truncated) chunkRange.length = mainEnd - chunkRange.start; // Truncated recording.
+                    dataChunk = chunkRange;
+                }
+                else if (type != "JUNK" && ! truncated)
+                {
+                    readMetadataChunk (type, chunkRange, metadataBytes);
                 }
 
-                if (type == "fmt ")                          readChunk_fmt  (chunkRange);
-                else if (type == "data")                     readChunk_data (chunkRange, isRF64);
-                else if (type == "bext")                     readMetadata_BWAV    (type, chunkRange);
+                if (truncated) break;
+                const auto next = chunkRange.getNextChunkStart();
+                if (next >= mainEnd) break; // Also accepts a missing final pad byte.
+                seek (next);
+            }
+            if (!foundFormat || !foundData || !frameStride)
+                throwFormatException();
+            dataChunk.length -= dataChunk.length % frameStride; // A partial last frame is dropped.
+            properties.numFrames = dataChunk.length / frameStride;
+            rawBuffer.resize (std::max<size_t> (frameStride, (65536u / frameStride) * frameStride));
+        }
+
+        // Optional chunks never make the audio unreadable: a damaged, undersized or
+        // oversized one is dropped (not clamped to unrelated data) and parsing continues.
+        void readMetadataChunk (const std::string& type, ChunkRange chunkRange, uint64_t& metadataBytes)
+        {
+            const auto minimum = type == "bext" ? 602u : type == "smpl" ? 36u :
+                type == "cue " || type == "LIST" ? 4u :
+                type == "inst" || type == "INST" ? 7u : type == "acid" ? 24u : 0u;
+            if (chunkRange.length < minimum || chunkRange.length > 16777216u ||
+                chunkRange.length > 33554432u - metadataBytes)
+                return;
+
+            try
+            {
+                if (type == "bext")                          readMetadata_BWAV    (type, chunkRange);
                 else if (type == "cue ")                     readMetadata_Cue     (type, chunkRange);
                 else if (type == "smpl")                     readMetadata_SMPL    (type, chunkRange);
                 else if (type == "LIST")                     readMetadata_LIST    (type, chunkRange);
-                else if (type == "Trkn")                     readMetadata_Trkn    (type, chunkRange);
-                else if (type == "axml")                     readMetadata_AXML    (type, chunkRange);
+                else if (type == "Trkn" || type == "axml")   readMetadata_Text    (type, chunkRange);
                 else if (type == "inst" || type == "INST")   readMetadata_INST    (type);
                 else if (type == "acid")                     readMetadata_ACID    (type);
-                else if (type != "JUNK")                     readMetadata_Unknown (type, chunkRange);
-
-                if (getPosition() > chunkRange.getEnd()) throwFormatException();
-                seek (chunkRange.getNextChunkStart());
+                else                                         readMetadata_Unknown (type, chunkRange);
+                metadataBytes += chunkRange.length;
             }
-            if (!foundFormat || !foundData || !frameStride || dataChunk.length % frameStride)
-                throwFormatException();
-            properties.numFrames = dataChunk.length / frameStride;
+            catch (const FormatException&) {}
+        }
+
+        template <typename Buffer>
+        static void decodeIntegers (Buffer& dest, const char* raw, uint32_t bytes)
+        {
+            // Little-endian PCM (8-bit is unsigned) to exactly value / 2^(bits-1).
+            using FloatType = typename Buffer::Sample;
+            const auto channels = dest.getNumChannels();
+            const auto frames = dest.getNumFrames();
+            const auto stride = static_cast<size_t> (channels) * bytes;
+            const auto scale = static_cast<FloatType> (std::ldexp (1.0, 1 - static_cast<int> (bytes * 8u)));
+
+            for (uint32_t chan = 0; chan < channels; ++chan)
+            {
+                auto s = reinterpret_cast<const uint8_t*> (raw) + static_cast<size_t> (chan) * bytes;
+                auto out = dest.getIterator (chan);
+
+                for (uint32_t frame = 0; frame < frames; ++frame, s += stride, ++out)
+                {
+                    int32_t v;
+                    if (bytes == 1)      v = static_cast<int32_t> (s[0]) - 128;
+                    else if (bytes == 2) v = static_cast<int16_t> (static_cast<uint16_t> (s[0] | (s[1] << 8)));
+                    else if (bytes == 3) v = static_cast<int32_t> ((static_cast<uint32_t> (s[0]) << 8)
+                                                                   | (static_cast<uint32_t> (s[1]) << 16)
+                                                                   | (static_cast<uint32_t> (s[2]) << 24)) >> 8;
+                    else                 v = static_cast<int32_t> (static_cast<uint32_t> (s[0])
+                                                                   | (static_cast<uint32_t> (s[1]) << 8)
+                                                                   | (static_cast<uint32_t> (s[2]) << 16)
+                                                                   | (static_cast<uint32_t> (s[3]) << 24));
+                    *out = scale * static_cast<FloatType> (v);
+                }
+            }
         }
 
         void readChunk_fmt (ChunkRange chunkRange)
@@ -320,23 +383,38 @@ struct CyDSPWavFormat<supportWriting>::Implementation
                 throwFormatException();
         }
 
-        void readChunk_data (ChunkRange chunkRange, bool isRF64)
-        {
-            if (isRF64 && dataChunk.length != 0)
-                chunkRange.length = dataChunk.length;
-
-            dataChunk = chunkRange;
-            properties.numFrames = frameStride > 0 ? (dataChunk.length / frameStride) : 0;
-        }
-
         void readMetadata_Unknown (std::string type, ChunkRange chunkRange)
         {
             addMetadata (choc::json::create ("type", type,
                                              "content", readIntoBase64 (chunkRange.getEnd() - getPosition())));
         }
 
+        // Text in a legacy 8-bit encoding cannot be carried by the JSON strings without
+        // being altered: such chunks keep their exact bytes under "data" instead.
+        void readMetadata_Raw (std::string type, ChunkRange chunkRange)
+        {
+            seek (chunkRange.start);
+            addMetadata (choc::json::create ("type", type, "data", readIntoBase64 (chunkRange.length)));
+        }
+
+        static bool isUTF8 (const std::string& s)
+        {
+            return choc::text::findInvalidUTF8Data (s.data(), s.size()) == nullptr;
+        }
+
         void readMetadata_BWAV (std::string type, ChunkRange chunkRange)
         {
+            {
+                std::string text;
+                text.resize (338); // description, originator, reference, date and time
+                stream->read (text.data(), 338);
+                seek (chunkRange.start + 602);
+                auto history = readStringToEndOfChunk (chunkRange);
+                if (! isUTF8 (text) || ! isUTF8 (history))
+                    return readMetadata_Raw (type, chunkRange);
+                seek (chunkRange.start);
+            }
+
             auto readUMID = [this]
             {
                 char umid[64];
@@ -405,8 +483,8 @@ struct CyDSPWavFormat<supportWriting>::Implementation
 
             smpl.setMember ("loops", std::move (loops));
 
-            if (getPosition() + samplerDataSize > chunkRange.getEnd())
-                throwFormatException();
+            // A sampler-data size beyond the chunk is a common writer defect: keep the loops.
+            samplerDataSize = static_cast<uint32_t> (std::min<uint64_t> (samplerDataSize, chunkRange.getEnd() - getPosition()));
 
             smpl.setMember ("samplerData", readIntoBase64 (samplerDataSize));
             addMetadata (std::move (smpl));
@@ -505,24 +583,21 @@ struct CyDSPWavFormat<supportWriting>::Implementation
             addMetadata (std::move (acid));
         }
 
-        void readMetadata_Trkn (std::string type, ChunkRange chunkRange)
+        void readMetadata_Text (std::string type, ChunkRange chunkRange) // Trkn, axml
         {
-            addMetadata (choc::json::create ("type", type,
-                                             "content", readStringToEndOfChunk (chunkRange)));
-        }
-
-        void readMetadata_AXML (std::string type, ChunkRange chunkRange)
-        {
-            addMetadata (choc::json::create ("type", type,
-                                             "content", readStringToEndOfChunk (chunkRange)));
+            auto content = readStringToEndOfChunk (chunkRange);
+            if (! isUTF8 (content))
+                return readMetadata_Raw (type, chunkRange);
+            addMetadata (choc::json::create ("type", type, "content", content));
         }
 
         std::shared_ptr<std::istream> stream;
         AudioFileProperties properties;
         ChunkRange dataChunk;
-        uint64_t streamEndPosition = 0;
+        uint64_t streamEndPosition = 0, ds64DataSize = 0;
         uint32_t frameStride = 0, sampleStride = 0;
         bool containsOggVorbisData = false;
+        std::vector<char> rawBuffer;
 
         template <typename Type>
         void seek (Type pos)            { stream->seekg (static_cast<std::streamoff> (pos)); }
@@ -545,12 +620,12 @@ struct CyDSPWavFormat<supportWriting>::Implementation
             return std::string (chunk, 4u);
         }
 
-        ChunkRange readChunkRange (bool allowRF64Sentinel = false)
+        // The declared length is validated (or clamped) against the enclosing range by the caller.
+        ChunkRange readChunkRange()
         {
             const auto len = readInt<uint32_t>();
             const auto pos = getPosition();
-            if (pos > streamEndPosition ||
-                (!(allowRF64Sentinel && len == 0xffffffffu) && len > streamEndPosition - pos))
+            if (pos > streamEndPosition)
                 throwFormatException();
             return { pos, len };
         }
@@ -608,7 +683,9 @@ struct CyDSPWavFormat<supportWriting>::Implementation
         {
             CHOC_ASSERT (stream != nullptr && ! stream->fail());
             CHOC_ASSERT (properties.sampleRate > 0 && properties.numChannels != 0 && properties.bitDepth != BitDepth::unknown);
-            stream->exceptions (std::ostream::failbit);
+            // CyAudioCore: a failed write only sets badbit; without it in the mask a full
+            // disk went unreported with standard libraries that never promote it to failbit.
+            stream->exceptions (std::ostream::failbit | std::ostream::badbit);
 
             headerPosition = stream->tellp();
             writeHeaderChunk();
@@ -641,11 +718,9 @@ struct CyDSPWavFormat<supportWriting>::Implementation
                     return false;
 
                 auto framesToDo = source.getNumFrames();
-                properties.numFrames += framesToDo;
 
                 while (framesToDo != 0)
                 {
-                    namespace sd = choc::audio::sampledata;
                     auto rawTempBuffer = tempBuffer.data();
                     auto framesThisTime = std::min (framesToDo, tempBufferFrames);
                     auto sourceThisTime = source.getStart (framesThisTime);
@@ -653,10 +728,11 @@ struct CyDSPWavFormat<supportWriting>::Implementation
 
                     switch (properties.bitDepth)
                     {
-                        case BitDepth::int8:    sd::copyToInterleavedIntData<sd::UInt8>             (rawTempBuffer, 1, sourceThisTime); sampleStride = 1; break;
-                        case BitDepth::int16:   sd::copyToInterleavedIntData<sd::Int16LittleEndian> (rawTempBuffer, 2, sourceThisTime); sampleStride = 2; break;
-                        case BitDepth::int24:   sd::copyToInterleavedIntData<sd::Int24LittleEndian> (rawTempBuffer, 3, sourceThisTime); sampleStride = 3; break;
-                        case BitDepth::int32:   sd::copyToInterleavedIntData<sd::Int32LittleEndian> (rawTempBuffer, 4, sourceThisTime); sampleStride = 4; break;
+                        // CyAudioCore: round to nearest and clamp (see encodeIntegers).
+                        case BitDepth::int8:    encodeIntegers (rawTempBuffer, 1, sourceThisTime); sampleStride = 1; break;
+                        case BitDepth::int16:   encodeIntegers (rawTempBuffer, 2, sourceThisTime); sampleStride = 2; break;
+                        case BitDepth::int24:   encodeIntegers (rawTempBuffer, 3, sourceThisTime); sampleStride = 3; break;
+                        case BitDepth::int32:   encodeIntegers (rawTempBuffer, 4, sourceThisTime); sampleStride = 4; break;
 
                         case BitDepth::float32:
                         {
@@ -679,6 +755,7 @@ struct CyDSPWavFormat<supportWriting>::Implementation
                     }
 
                     stream->write (rawTempBuffer, static_cast<std::streamsize> (sampleStride * numChannels * framesThisTime));
+                    properties.numFrames += framesThisTime; // Only frames that reached the stream are declared.
                     framesToDo -= framesThisTime;
                     source = source.fromFrame (framesThisTime);
                 }
@@ -688,6 +765,42 @@ struct CyDSPWavFormat<supportWriting>::Implementation
             catch (...) {}
 
             return false;
+        }
+
+        // Round half away from zero, clamped to [-2^(bits-1), 2^(bits-1) - 1]; NaN writes silence.
+        static int32_t quantise (double v, double scale) noexcept
+        {
+            if (! (v == v)) return 0;
+            const auto x = v * scale;
+            if (x >= scale - 1) return static_cast<int32_t> (scale - 1);
+            if (x <= -scale)    return static_cast<int32_t> (-scale);
+            auto i = static_cast<int64_t> (x);
+            const auto fraction = x - static_cast<double> (i);
+            if (fraction >= 0.5) ++i; else if (fraction <= -0.5) --i;
+            return static_cast<int32_t> (i);
+        }
+
+        template <typename Buffer>
+        static void encodeIntegers (char* raw, uint32_t bytes, const Buffer& source)
+        {
+            // Samples are value * 2^(bits-1): the exact inverse of the reader. Little-endian; 8-bit unsigned.
+            const auto size = source.getSize();
+            const auto stride = static_cast<size_t> (size.numChannels) * bytes;
+            const auto scale = std::ldexp (1.0, static_cast<int> (bytes * 8u) - 1);
+
+            for (decltype (size.numChannels) chan = 0; chan < size.numChannels; ++chan)
+            {
+                auto d = reinterpret_cast<uint8_t*> (raw) + static_cast<size_t> (chan) * bytes;
+                auto in = source.getIterator (chan);
+
+                for (decltype (size.numFrames) frame = 0; frame < size.numFrames; ++frame, d += stride, ++in)
+                {
+                    const auto value = quantise (static_cast<double> (in.get()), scale);
+                    const auto bits = static_cast<uint32_t> (bytes == 1 ? value + 128 : value);
+                    for (uint32_t b = 0; b < bytes; ++b)
+                        d[b] = static_cast<uint8_t> (bits >> (8u * b));
+                }
+            }
         }
 
         bool flush() override
@@ -748,7 +861,8 @@ struct CyDSPWavFormat<supportWriting>::Implementation
                 writeChunkNameAndSize ("ds64", 28);
                 writeInt<uint64_t> (mainChunkSize);
                 writeInt<uint64_t> (totalAudioDataSize);
-                writeZeros (12);
+                writeInt<uint64_t> (properties.numFrames); // sample count, as common readers expect
+                writeZeros (4);                            // empty chunk-size table
             }
             else
             {
@@ -760,7 +874,8 @@ struct CyDSPWavFormat<supportWriting>::Implementation
             writeInt<uint16_t> (0xfffe); // WAVE_FORMAT_EXTENSIBLE
             writeInt<uint16_t> (static_cast<uint16_t> (properties.numChannels));
             writeInt<uint32_t> (static_cast<uint32_t> (properties.sampleRate + 0.5));
-            writeInt<uint32_t> (static_cast<uint32_t> (properties.sampleRate * bytesPerFrame + 0.5));
+            // The 32-bit field saturates instead of converting an out-of-range double.
+            writeInt<uint32_t> (static_cast<uint32_t> (std::min (properties.sampleRate * bytesPerFrame + 0.5, 4294967295.0)));
             writeInt<uint16_t> (static_cast<uint16_t> (bytesPerFrame));
             writeInt<uint16_t> (static_cast<uint16_t> (bytesPerSample * 8)); // bits per sample
             writeInt<uint16_t> (22); // size of the extension
@@ -785,6 +900,7 @@ struct CyDSPWavFormat<supportWriting>::Implementation
                 type == "RIFF" || type == "RF64" || type == "ds64")
                 throwFormatException();
 
+            if (isRawText (type, chunk))            return getDecodedBase64Size (chunk, "data");
             if (type == "bext")                     return getMetadataSize_BWAV (chunk);
             if (type == "smpl")                     return getMetadataSize_SMPL (chunk);
             if (type == "inst" || type == "INST")   return getMetadataSize_INST();
@@ -803,6 +919,7 @@ struct CyDSPWavFormat<supportWriting>::Implementation
             auto type = chunk["type"].toString();
             writeChunkNameAndSize (type, size);
 
+            if (isRawText (type, chunk))            return writeData (getDecodedBase64 (chunk, "data"));
             if (type == "bext")                     return writeMetadata_BWAV (chunk);
             if (type == "smpl")                     return writeMetadata_SMPL (chunk);
             if (type == "inst" || type == "INST")   return writeMetadata_INST (chunk);
@@ -813,6 +930,13 @@ struct CyDSPWavFormat<supportWriting>::Implementation
             if (type == "axml")                     return writeMetadata_AXML (chunk);
 
             return writeMetadata_Unknown (chunk);
+        }
+
+        // Byte-exact text chunk kept by the reader (legacy 8-bit encoding).
+        static bool isRawText (const std::string& type, const choc::value::ValueView& chunk)
+        {
+            return (type == "bext" || type == "Trkn" || type == "axml")
+                    && chunk.isObject() && chunk.hasObjectMember ("data") && chunk["data"].isString();
         }
 
         void writeMetadataChunk (const choc::value::ValueView& chunk)

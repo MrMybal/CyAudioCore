@@ -54,12 +54,26 @@ void run(LV2_Handle h, std::uint32_t n) {
         for (std::uint32_t i = 0; i < n; ++i)
             out[i] = in[i] * (*gain) + e.memory + static_cast<float*>(e.ports[9])[i];
     }
-    *static_cast<float*>(e.ports[7]) = 11;
+    // Regression triggers: gain 1.5 reports another latency, gain 1.75 emits an
+    // output event placed after the end of this run.
+    *static_cast<float*>(e.ports[7]) = *gain == 1.5f ? 13.f : 11.f;
     *static_cast<float*>(e.ports[8]) = e.worked;
     auto* out = static_cast<LV2_Atom_Sequence*>(e.ports[6]);
     auto capacity = out->atom.size;
     out->atom = {8, e.sequence};
     out->body = {0, 0};
+    if (*gain == 1.75f) {
+        struct {
+            LV2_Atom_Event event;
+            std::uint8_t bytes[8];
+        } late{};
+        late.event.time.frames = std::int64_t(n) + 3;
+        late.event.body = {3, e.midi};
+        late.bytes[0] = 0x90;
+        late.bytes[1] = 60;
+        late.bytes[2] = 100;
+        lv2_atom_sequence_append_event(out, capacity, &late.event);
+    }
     const auto* in = static_cast<const LV2_Atom_Sequence*>(e.ports[5]);
     LV2_ATOM_SEQUENCE_FOREACH(in, event) if (event->body.type == e.midi) {
         lv2_atom_sequence_append_event(out, capacity, event);

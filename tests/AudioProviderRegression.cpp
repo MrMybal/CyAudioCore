@@ -3,8 +3,11 @@
 #include "cyaudio/io/AudioDeviceManager.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <iostream>
+#include <thread>
 #include <limits>
 #include <stdexcept>
 void runRealtimeAudit(void (*)(void*) noexcept, void*);
@@ -155,5 +158,33 @@ void managerClock() {
     ok(manager.poll(1200)); require(manager.generation() == 2 && manager.running(),"control reconnect advances generation");
     manager.close(); require(fake.closed == 2,"manager stream cleanup");
 }
+// Active channels are indices into the device's own channels: any subset of them can be
+// selected, not only one that ends on the last native channel. The null device is stereo.
+void activeChannels() {
+    AudioDeviceContext context; ok(context.prepare(true));
+    struct Seen { std::atomic<unsigned> calls{0}, wrong{0}; } seen;
+    const AudioDeviceCallback callback = [](void* p,AudioBlock<const float>,AudioBlock<float> out,std::uint64_t) noexcept {
+        auto& s = *static_cast<Seen*>(p);
+        if (out.channels() != 1) s.wrong.fetch_add(1);
+        for (auto x : out.channel(0)) if (x != 0) s.wrong.fetch_add(1);
+        s.calls.fetch_add(1); return Status::ok;
+    };
+    AudioDevice device; AudioDeviceConfig c; c.outputChannels = 1; c.maxCallbackFrames = 64;
+    for (unsigned native : {0u,1u}) {
+        c.activeOutputChannels = {native};
+        ok(device.open(context,c,callback,&seen));
+        AudioStreamDescription d; ok(device.description(d));
+        require(d.output.channels == 1 && d.output.nativeChannels == 2 && d.output.activeChannels == std::vector<unsigned>{native},
+            "any native channel selectable");
+    }
+    c.activeOutputChannels = {2};
+    require(device.open(context,c,callback,&seen) == Status::channel_mismatch && device.sampleRate() == 48000,
+        "channel beyond the device refused, previous stream kept");
+    ok(device.start());
+    for (unsigned i = 0; i < 200 && seen.calls.load() < 8; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    ok(device.stop());
+    require(seen.calls.load() >= 8 && !seen.wrong.load() && !device.callbackErrors(),"selected channel callback contract");
+    device.close();
 }
-void audioProviderRegression() { selection(); buffers(); managerClock(); std::cout << "PASS audio providers/shared buffers/layouts/maps/clocks/reconnect/realtime\n"; }
+}
+void audioProviderRegression() { selection(); buffers(); managerClock(); activeChannels(); std::cout << "PASS audio providers/shared buffers/layouts/maps/clocks/reconnect/realtime\n"; }

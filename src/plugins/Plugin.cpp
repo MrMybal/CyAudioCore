@@ -153,8 +153,29 @@ Status PluginInstance::activate(const PluginPrepareOptions& o) noexcept {
     } catch (...) {
         return Status::allocation_failed;
     }
-    const auto r = state_->backend->activate(o);
+    auto r = state_->backend->activate(o);
     if (r == Status::ok) {
+        // A backend may refresh its description inside activate (VST3 does): size the
+        // overlap table and check the precision against what is active now.
+        try {
+            std::size_t total = 0;
+            for (const auto& port : d.inputs)
+                total += port.channels;
+            for (const auto& port : d.outputs)
+                total += port.channels;
+            if (total > 32768)
+                r = Status::invalid_spec;
+            else if (o.useFloat64 ? !d.float64 : !d.float32)
+                r = Status::unsupported_format;
+            else
+                state_->intervals.resize(total);
+        } catch (...) {
+            r = Status::allocation_failed;
+        }
+        if (r != Status::ok) {
+            (void)state_->backend->deactivate();
+            return r;
+        }
         state_->options = o;
         state_->minimumSteadyFrame = -1;
         state_->setTiming(state_->backend->timing());
@@ -372,6 +393,16 @@ Status PluginInstance::loadState(std::span<const std::uint8_t> in) noexcept {
     if (lifecycle() != PluginLifecycle::initialized)
         return Status::transition_in_progress;
     return state_->backend->loadState(in);
+}
+Status detail::PluginInstanceAccess::saveParked(PluginInstance& instance,
+                                                std::vector<std::uint8_t>& out,
+                                                std::size_t limit) noexcept {
+    auto* state = instance.state_.get();
+    if (!state)
+        return Status::not_prepared;
+    if (!state->onMain() || !limit || limit > 64 * 1024 * 1024)
+        return Status::invalid_argument;
+    return state->backend->saveState(out, limit);
 }
 PluginTiming PluginInstance::timing() const noexcept {
     if (!state_)

@@ -1,6 +1,7 @@
 #include "cyaudio/core/DspTypes.h"
 #include "cyaudio/midi/Mpe.h"
 #include <algorithm>
+#include <bit>
 namespace cyaudio {
 void MidiParameterParser::reset() noexcept {
     channels_.fill(State{});
@@ -16,18 +17,21 @@ bool MidiParameterParser::process(MidiMessageView m, MidiParameter& result) noex
             s = State{};
             s.registered = reg;
         }
-        if (cc == 101 || cc == 99)
-            s.msb = value;
-        else
-            s.lsb = value;
-        s.dataLsb = 0;
+        auto& selected = cc == 101 || cc == 99 ? s.msb : s.lsb;
+        // A different parameter starts from a clean value; re-sending the current selection
+        // keeps it, so increment/decrement still accumulate.
+        if (selected != value)
+            s.dataMsb = s.dataLsb = 0;
+        selected = value;
         return false;
     }
     if (s.msb == 127 && s.lsb == 127)
         return false;
-    if (cc == 6)
+    if (cc == 6) {
+        // Data Entry MSB restarts the value: an LSB left from an earlier entry is not part of it.
         s.dataMsb = value;
-    else if (cc == 38)
+        s.dataLsb = 0;
+    } else if (cc == 38)
         s.dataLsb = value;
     else if (cc == 96 || cc == 97) {
         auto v = (s.dataMsb << 7) | s.dataLsb;
@@ -50,6 +54,8 @@ void MpeInstrument::reset() noexcept {
         ch.fill(MpeNote{});
     for (auto& ch : sostenuto_)
         ch.fill(false);
+    for (auto& ch : active_)
+        ch.fill(0);
     channels_.fill(Channel{});
     for (unsigned ch = 0; ch < 16; ++ch)
         channels_[ch].range = master(ch + 1) < 0 ? 2 : 48;
@@ -59,10 +65,9 @@ void MpeInstrument::reset() noexcept {
 Status MpeInstrument::setZones(unsigned lower, unsigned upper) noexcept {
     if (lower > 15 || upper > 15 || (lower && upper && lower + upper > 14))
         return Status::invalid_argument;
-    for (const auto& ch : notes_)
-        for (const auto& n : ch)
-            if (n.active)
-                return Status::transition_in_progress;
+    for (const auto& ch : active_)
+        if (ch[0] || ch[1])
+            return Status::transition_in_progress;
     lower_ = lower;
     upper_ = upper;
     reset();
@@ -85,8 +90,9 @@ void MpeInstrument::expression(unsigned channel, std::uint32_t frame, MpeCallbac
         const auto masterIndex = master(ch + 1);
         if (ch != channel && masterIndex != static_cast<int>(channel))
             continue;
-        for (auto& n : notes_[ch])
-            if (n.active) {
+        for (unsigned word = 0; word < 2; ++word)
+            for (auto bits = active_[ch][word]; bits; bits &= bits - 1) {
+                auto& n = notes_[ch][word * 64 + static_cast<unsigned>(std::countr_zero(bits))];
                 n.pitchSemitones = channels_[ch].bend * channels_[ch].range;
                 n.pressure = channels_[ch].pressure;
                 n.timbre = channels_[ch].timbre;
@@ -108,14 +114,18 @@ void MpeInstrument::release(unsigned channel, bool force, std::uint32_t frame, M
             continue;
         const bool pedal =
             channels_[ch].sustain || (m >= 0 && channels_[static_cast<unsigned>(m)].sustain);
-        for (unsigned key = 0; key < 128; ++key) {
-            auto& n = notes_[ch][key];
-            const bool sostenuto = sostenuto_[ch][key] != 0;
-            if (n.active && (force || (!n.keyDown && !pedal && !sostenuto))) {
-                n.active = false;
-                callback(context, force ? MpeChange::allSoundOff : MpeChange::noteOff, n, frame);
+        for (unsigned word = 0; word < 2; ++word)
+            for (auto bits = active_[ch][word]; bits; bits &= bits - 1) {
+                const auto key = word * 64 + static_cast<unsigned>(std::countr_zero(bits));
+                auto& n = notes_[ch][key];
+                const bool sostenuto = sostenuto_[ch][key] != 0;
+                if (force || (!n.keyDown && !pedal && !sostenuto)) {
+                    n.active = false;
+                    active_[ch][word] &= ~(std::uint64_t{1} << (key & 63));
+                    callback(context, force ? MpeChange::allSoundOff : MpeChange::noteOff, n,
+                             frame);
+                }
             }
-        }
     }
 }
 Status MpeInstrument::process(MidiMessageView message, std::uint32_t frame, MpeCallback callback,
@@ -131,9 +141,21 @@ Status MpeInstrument::process(MidiMessageView message, std::uint32_t frame, MpeC
     MidiParameter parameter;
     if (parameters_.process(message, parameter) && parameter.registered) {
         if (parameter.number == 0) {
-            channel.range = std::min(96.0, static_cast<double>(parameter.value >> 7) +
-                                               static_cast<double>(parameter.value & 127) / 100);
-            expression(ch, frame, callback, context);
+            const auto range = std::min(96.0, static_cast<double>(parameter.value >> 7) +
+                                                  static_cast<double>(parameter.value & 127) / 100);
+            const auto zone = master(c);
+            if (zone < 0) {
+                channel.range = range; // Manager channel, or a channel outside every zone.
+                expression(ch, frame, callback, context);
+            } else {
+                // MPE: Pitch Bend Sensitivity received on any member channel sets the
+                // per-note range of every member channel of that zone.
+                for (unsigned member = 0; member < 16; ++member)
+                    if (master(member + 1) == zone) {
+                        channels_[member].range = range;
+                        expression(member, frame, callback, context);
+                    }
+            }
         } else if (parameter.number == 6 && (c == 1 || c == 16)) {
             const auto members = std::min(15u, parameter.value >> 7);
             for (unsigned i = 0; i < 16; ++i)
@@ -158,6 +180,7 @@ Status MpeInstrument::process(MidiMessageView message, std::uint32_t frame, MpeC
             n.active = false;
             callback(context, MpeChange::allSoundOff, n, frame);
         }
+        active_[ch][message.note() >> 6] |= std::uint64_t{1} << (message.note() & 63);
         sostenuto_[ch][message.note()] = 0;
         n = {++serial_,
              c,

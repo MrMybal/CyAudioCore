@@ -289,8 +289,13 @@ Status MiniaudioStream::openImpl(MiniaudioContext& context, const AudioDeviceCon
         config.periodSizeInFrames = c.periodFrames;
         config.capture.format = ma_format_f32;
         config.playback.format = ma_format_f32;
-        config.capture.channels = c.activeInputChannels.empty()?static_cast<ma_uint32>(c.inputChannels):*std::max_element(c.activeInputChannels.begin(),c.activeInputChannels.end())+1;
-        config.playback.channels = c.activeOutputChannels.empty()?static_cast<ma_uint32>(c.outputChannels):*std::max_element(c.activeOutputChannels.begin(),c.activeOutputChannels.end())+1;
+        // Active channels are indices into the device's own channels: zero asks miniaudio
+        // for the native count, so no channel conversion can remix or drop them. Any
+        // subset is then valid, not only one that ends on the device's last channel.
+        config.capture.channels = c.activeInputChannels.empty()?static_cast<ma_uint32>(c.inputChannels):0;
+        config.playback.channels = c.activeOutputChannels.empty()?static_cast<ma_uint32>(c.outputChannels):0;
+        // The adapter writes every native output sample of every callback itself.
+        config.noPreSilencedOutputBuffer = MA_TRUE;
         auto select = [&](const std::string& key, bool input, const ma_device_id*& id) {
             if (key.empty())
                 return true;
@@ -304,16 +309,24 @@ Status MiniaudioStream::openImpl(MiniaudioContext& context, const AudioDeviceCon
         if (!select(c.inputId, true, config.capture.pDeviceID) ||
             !select(c.outputId, false, config.playback.pDeviceID))
             return Status::invalid_argument;
-        const auto prepared = next->adapter.prepare(c, callback, extended, user, c.inputChannels ? config.capture.channels : 0, c.outputChannels ? config.playback.channels : 0);
-        if (prepared != Status::ok) return prepared;
         config.dataCallback = &State::render;
         config.notificationCallback = &State::notify;
         config.pUserData = next.get();
         if (ma_device_init(&context.state_->context, &config, &next->device) != MA_SUCCESS)
             return Status::device_unavailable;
         next->ready = true;
-        if(!c.activeInputChannels.empty()&&next->device.capture.internalChannels!=config.capture.channels)return Status::unsupported_backend;
-        if(!c.activeOutputChannels.empty()&&next->device.playback.internalChannels!=config.playback.channels)return Status::unsupported_backend;
+        // The device is not started yet: the adapter is prepared with the client channel
+        // counts miniaudio settled on (the native ones for an active-channel selection).
+        const std::size_t nativeInputs = c.inputChannels ? next->device.capture.channels : 0;
+        const std::size_t nativeOutputs = c.outputChannels ? next->device.playback.channels : 0;
+        auto reaches=[](const auto& active,std::size_t native,std::size_t internal) {
+            return active.empty()||(native==internal&&*std::max_element(active.begin(),active.end())<native);
+        };
+        if(!reaches(c.activeInputChannels,nativeInputs,next->device.capture.internalChannels)||
+           !reaches(c.activeOutputChannels,nativeOutputs,next->device.playback.internalChannels)||
+           nativeInputs>256||nativeOutputs>256)return Status::channel_mismatch;
+        const auto prepared = next->adapter.prepare(c, callback, extended, user, nativeInputs, nativeOutputs);
+        if (prepared != Status::ok) return prepared;
         if(c.inputChannels&&next->device.capture.shareMode!=config.capture.shareMode)return Status::unsupported_backend;
         if(c.outputChannels&&next->device.playback.shareMode!=config.playback.shareMode)return Status::unsupported_backend;
         state_.swap(next);

@@ -111,9 +111,15 @@ void identities() {
     AudioDeviceCapabilities caps; caps.bufferRangeKnown = true; ok(context->capabilities(key,false,caps));
     require(!caps.nativeFormatsKnown && !caps.duplexKnown && !caps.channelNamesKnown && !caps.bufferRangeKnown,"unknown hardware capabilities");
     AudioDeviceConfig c; c.outputId = key; std::unique_ptr<AudioProviderStream> stream;
+    // Two devices with one name: a positional ordinal keeps each of them selectable.
     f.duplicate = true; ok(context->enumerate(list));
-    require(context->open(c,&silence,nullptr,nullptr,stream) == Status::ambiguous && context->capabilities(key,false,caps) == Status::ambiguous,"indistinguishable devices rejected");
-    f.duplicate = false; c.outputId = "context/0";
+    require(list.size() == 4 && list[0].id == key && list[2].id == key + "/2" && !list[2].input && list[1].input && list[3].id == list[1].id + "/2",
+        "identical names stay distinguishable");
+    ok(context->open(c,&silence,nullptr,nullptr,stream)); stream.reset(); ok(context->capabilities(key,false,caps));
+    c.outputId = list[2].id; ok(context->open(c,&silence,nullptr,nullptr,stream)); stream.reset(); ok(context->capabilities(c.outputId,false,caps));
+    f.duplicate = false; ok(context->enumerate(list));
+    require(list.size() == 2 && context->open(c,&silence,nullptr,nullptr,stream) == Status::device_unavailable,"ordinal leaves with its device");
+    c.outputId = "context/0";
     require(context->open(c,&silence,nullptr,nullptr,stream) == Status::device_unavailable,"cross-provider identity rejected");
     c.outputId.clear(); c.outputChannels = 5;
     require(context->open(c,&silence,nullptr,nullptr,stream) == Status::channel_mismatch,"reported maximum client channels");
@@ -175,8 +181,27 @@ void processing() {
         require(f.closes == 1 && f.initializes == f.terminates && !runtime->leases && !runtime->streams,"stream/context teardown");
     }
 }
+// A catalogue refresh reinitializes every host API: at most one per interval, however
+// often the owner scans.
+void refreshLimit() {
+    Fake f; auto runtime = std::make_shared<PortAudioRuntime>(f.api());
+    static std::uint64_t ticks; ticks = 1000;
+    runtime->clock = []() noexcept { return ticks; }; runtime->refreshIntervalNs = 1000;
+    std::shared_ptr<AudioProviderContext> context; ok(createPortAudioContext(selected,runtime,context));
+    std::vector<AudioDeviceInfo> list; const auto initial = f.initializes;
+    for (int i = 0; i < 5; ++i) { ticks += 100; ok(context->enumerate(list)); }
+    require(f.initializes == initial && list.size() == 2,"scans inside the interval answer from the snapshot");
+    ticks += 600; ok(context->enumerate(list)); require(f.initializes == initial + 1,"one refresh once the interval elapsed");
+    ticks += 999; ok(context->enumerate(list)); require(f.initializes == initial + 1,"interval restarts at the refresh");
+    ticks += 1; ok(context->enumerate(list)); require(f.initializes == initial + 2,"next interval");
+    f.initError = paInsufficientMemory; ticks += 5000;
+    require(context->enumerate(list) == Status::allocation_failed && !runtime->initialized,"failed refresh reported");
+    f.initError = 0; ok(context->enumerate(list)); require(runtime->initialized && list.size() == 2,"recovery is not rate limited");
+    context.reset(); require(!runtime->leases && f.initializes == f.terminates + 1 && !f.forbidden,"refresh lifetime balance");
+}
 void manager() {
     Fake f; auto runtime = std::make_shared<PortAudioRuntime>(f.api());
+    runtime->refreshIntervalNs = 0; // This scenario reconnects immediately in virtual time.
     struct Driver {
         std::shared_ptr<AudioProviderContext> context;
         std::unique_ptr<AudioProviderStream> stream;
@@ -214,4 +239,4 @@ void manager() {
     require(!runtime->leases && f.initializes == f.terminates && !f.forbidden,"manager provider lifetime balance");
 }
 }
-void portAudioRegression() { errors(); identities(); processing(); manager(); std::cout << "PASS simulated PortAudio lifecycle/errors/identity/layout/clocks/realtime/reconnect\n"; }
+void portAudioRegression() { errors(); identities(); processing(); refreshLimit(); manager(); std::cout << "PASS simulated PortAudio lifecycle/errors/identity/layout/clocks/realtime/reconnect\n"; }

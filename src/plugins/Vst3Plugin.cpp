@@ -72,7 +72,8 @@ std::filesystem::path binaryPath(const std::filesystem::path& path) {
 #else
     constexpr auto architecture = "x86_64-win";
 #endif
-    return path / "Contents" / architecture / (path.stem().string() + ".vst3");
+    // The binary carries the bundle directory's own name; no narrowing conversion.
+    return path / "Contents" / architecture / path.filename();
 #elif defined(__APPLE__)
     return path;
 #else
@@ -85,7 +86,9 @@ std::filesystem::path binaryPath(const std::filesystem::path& path) {
 #else
     constexpr auto architecture = "x86_64-linux";
 #endif
-    return path / "Contents" / architecture / (path.stem().string() + ".so");
+    auto binary = path.stem();
+    binary += ".so";
+    return path / "Contents" / architecture / binary;
 #endif
 }
 Status loadVst(const std::filesystem::path& path, std::shared_ptr<VstModule>& out) {
@@ -194,8 +197,10 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
         std::atomic<std::uint32_t> sequence{0}, low{0}, high{0}, dirty{0};
     };
     std::unique_ptr<ParameterMirror[]> mirrors_;
+    std::atomic<std::uint32_t> mirrorsDirty_{0}; // Any mirror changed since the last pump.
     std::array<PluginEvent, 1024> uiBlock_;
     std::size_t uiBlockCount_ = 0;
+    DroppedEvents dropped_;
     void mirror(std::uint32_t id, double value) noexcept {
         const auto* p = parameter(id);
         if (!p)
@@ -207,6 +212,7 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
         m.high.store(std::uint32_t(bits >> 32), std::memory_order_release);
         m.sequence.fetch_add(1, std::memory_order_release);
         m.dirty.store(1, std::memory_order_release);
+        mirrorsDirty_.store(1, std::memory_order_release);
     }
     ParameterChanges incoming_, outgoing_;
     EventList incomingEvents_, outgoingEvents_;
@@ -330,26 +336,27 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
         return incomingEvents_.addEvent(native) == kResultOk ? Status::ok
                                                              : Status::update_queue_full;
     }
-    Status collectOutput(PluginEventBuffer* out) noexcept {
+    // Output that cannot be translated or stored is dropped and counted. The block
+    // the processor has just rendered is valid and is never failed because of it.
+    void collectOutput(PluginEventBuffer* out) noexcept {
         mergedCount_ = 0;
         const auto append = [&](const PluginEvent& e) {
-            if (mergedCount_ == merged_.size())
-                return false;
+            if (mergedCount_ == merged_.size()) {
+                dropped_.add();
+                return;
+            }
             merged_[mergedCount_] = {e, mergedCount_};
             ++mergedCount_;
-            return true;
         };
         for (std::size_t i = 0; i < uiBlockCount_; ++i)
-            if (!append(uiBlock_[i]))
-                return Status::update_queue_full;
+            append(uiBlock_[i]);
         for (std::uint32_t i = 0; i < outgoing_.used; ++i) {
             const auto& point = outgoing_.points[i];
             PluginEvent e;
             e.id = point.id;
             e.frame = point.frame;
             e.value = point.value;
-            if (!append(e))
-                return Status::update_queue_full;
+            append(e);
             mirror(e.id, e.value);
         }
         for (std::uint32_t i = 0; i < outgoingEvents_.count; ++i) {
@@ -373,10 +380,12 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
             } else if (native.type == Event::kDataEvent) {
                 e.kind = PluginEventKind::sysex;
                 e.bytes = {native.data.bytes, native.data.size};
-            } else
-                return Status::unsupported_format;
-            if (!append(e))
-                return Status::update_queue_full;
+            } else {
+                // No portable PluginEvent form (poly pressure, legacy CC out, chord...).
+                dropped_.add();
+                continue;
+            }
+            append(e);
         }
         std::sort(merged_.begin(), merged_.begin() + std::ptrdiff_t(mergedCount_),
                   [](const auto& a, const auto& b) {
@@ -384,12 +393,9 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
                              (a.event.frame == b.event.frame && a.order < b.order);
                   });
         if (out)
-            for (std::size_t i = 0; i < mergedCount_; ++i) {
-                const auto r = out->add(merged_[i].event);
-                if (r != Status::ok)
-                    return r;
-            }
-        return Status::ok;
+            for (std::size_t i = 0; i < mergedCount_; ++i)
+                if (out->add(merged_[i].event) != Status::ok)
+                    dropped_.add();
     }
     template <Sample T> Status processing(const PluginProcess<T>& p) noexcept {
         incoming_.reset(p.frames);
@@ -401,10 +407,11 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
         while (const auto* edit = uiToAudio_.peek()) {
             if (uiCount++ >= std::min<std::size_t>(options_.maximumEvents, uiBlock_.size()))
                 break;
-            const auto r = addInput(edit->event);
-            if (r != Status::ok)
-                return r;
-            if (edit->native)
+            // An edit that can no longer be applied (for example after a parameter
+            // rescan) is dropped and counted instead of blocking the queue head.
+            if (addInput(edit->event) != Status::ok)
+                dropped_.add();
+            else if (edit->native)
                 uiBlock_[uiBlockCount_++] = edit->event;
             (void)uiToAudio_.discard();
         }
@@ -489,7 +496,8 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
         data.processContext = &context;
         if (processor_->process(data) != kResultOk)
             return Status::io_error;
-        return collectOutput(p.outputEvents);
+        collectOutput(p.outputEvents);
+        return Status::ok;
     }
 
   public:
@@ -828,7 +836,11 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
         try {
             MemoryStream component, controller;
             component.limit = controller.limit = limit;
-            if (component_->getState(&component) != kResultOk || component.failed)
+            // A part without state may answer kNotImplemented, provided it wrote nothing.
+            const auto componentStatus = component_->getState(&component);
+            if (component.failed ||
+                (componentStatus != kResultOk &&
+                 !(componentStatus == kNotImplemented && component.bytes.empty())))
                 return Status::io_error;
             if (controller_) {
                 const auto status = controller_->getState(&controller);
@@ -870,23 +882,33 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
         const auto a = std::size_t(word(16)), b = std::size_t(word(20));
         if (a > state.size() - 24 || b != state.size() - 24 - a)
             return Status::invalid_argument;
-        MemoryStream component(state.subspan(24, a));
-        if (component_->setState(&component) != kResultOk)
-            return Status::io_error;
-        if (controller_) {
-            component.position = 0;
-            if (controller_->setComponentState(&component) != kResultOk)
+        Status result = Status::ok;
+        if (a) { // An empty component state was saved by a component that has none.
+            MemoryStream component(state.subspan(24, a));
+            if (component_->setState(&component) != kResultOk)
                 return Status::io_error;
-            MemoryStream controller(state.subspan(24 + a, b));
-            if (b && controller_->setState(&controller) != kResultOk)
-                return Status::io_error;
+            if (controller_) {
+                // Optional controller notification: the SDK default answers
+                // kNotImplemented and many controllers answer kResultFalse.
+                component.position = 0;
+                const auto synced = controller_->setComponentState(&component);
+                if (synced != kResultOk && synced != kNotImplemented && synced != kResultFalse)
+                    result = Status::io_error;
+            }
         }
+        if (controller_ && b && result == Status::ok) {
+            MemoryStream controller(state.subspan(24 + a, b));
+            if (controller_->setState(&controller) != kResultOk)
+                result = Status::io_error;
+        }
+        // The component state is applied from here on, whatever the controller
+        // answered: stale UI edits and mirrors must not overwrite it.
         UiEdit stale;
         while (uiToAudio_.pop(stale)) {
         }
         for (std::size_t i = 0; i < description_.parameters.size(); ++i)
             mirrors_[i].dirty.store(0, std::memory_order_relaxed);
-        return Status::ok;
+        return result;
     }
     Status openEditor(const PluginWindow& window, PluginEditorSize& size) noexcept override {
         if (!controller_ || window.floating)
@@ -1000,7 +1022,7 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
     std::uint32_t pumpMainThread() noexcept override {
         // Last-value mailboxes preserve final automation across slow UI pumps.
         // All synchronisation uses lock-free32-bit atomics, including on ARM32.
-        if (controller_)
+        if (controller_ && mirrorsDirty_.exchange(0, std::memory_order_acq_rel))
             for (std::size_t i = 0; i < description_.parameters.size(); ++i) {
                 auto& m = mirrors_[i];
                 if (!m.dirty.exchange(0, std::memory_order_acq_rel))
@@ -1011,13 +1033,14 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
                 const auto after = m.sequence.load(std::memory_order_acquire);
                 if ((before & 1u) || before != after) {
                     m.dirty.store(1, std::memory_order_release);
+                    mirrorsDirty_.store(1, std::memory_order_release);
                     continue;
                 }
                 const auto value =
                     std::bit_cast<double>(std::uint64_t(low) | (std::uint64_t(high) << 32));
                 controller_->setParamNormalized(description_.parameters[i].id, value);
             }
-        const auto flags = requests_.exchange(0, std::memory_order_acq_rel);
+        const auto flags = requests_.exchange(0, std::memory_order_acq_rel) | dropped_.take();
         if (callbacks_.requests && flags)
             callbacks_.requests(callbacks_.context, flags);
         return flags;

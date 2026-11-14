@@ -45,17 +45,20 @@ struct DawBuildingBlocks {
     }
     // Device/control producer calls collector.pushMidi/pushUmp with steady-clock ns.
     // Audio owner supplies the matching callback anchor; lifecycle changes require
-    // callbacks idle. Retain events on output saturation before calling again.
+    // callbacks idle. Output saturation (update_queue_full) keeps the remainder queued for
+    // the next block; block_too_large means an event larger than the whole MidiBuffer was
+    // dropped. In both cases the events already collected are played and the buffers reset.
     cyaudio::Status process(cyaudio::AudioBlock<float> output, cyaudio::AudioClockAnchor clock) noexcept {
-        auto status =
+        const auto collected =
             collector.collect(clock, static_cast<std::uint32_t>(output.frames()), midi, ump);
-        if (status != cyaudio::Status::ok)
-            return status;
-        status = transport.process(output, cyaudio::UnderrunPolicy::silenceAndAdvance);
+        if (collected != cyaudio::Status::ok && collected != cyaudio::Status::update_queue_full &&
+            collected != cyaudio::Status::block_too_large)
+            return collected;
+        auto status = transport.process(output, cyaudio::UnderrunPolicy::silenceAndAdvance);
         if (status == cyaudio::Status::ok)
             status = synth.process(output, &midi, &ump, true);
         midi.reset();
         ump.reset();
-        return status;
+        return status == cyaudio::Status::ok ? collected : status;
     }
 };

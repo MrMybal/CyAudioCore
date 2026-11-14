@@ -348,6 +348,33 @@ using namespace cyaudio;
     ok(events.add(event));
     require(instance.process(PluginProcess<float>{inputs, outputs, 64, &events}) ==
             Status::unsupported_format);
+    // The fixture echoes its input events. Poly pressure has a VST3 input form but no
+    // portable output form: the echoed event is dropped and reported, the audio is kept.
+    {
+        for (std::size_t ch = 0; ch < 2; ++ch)
+            std::fill(main.block().channel(ch).begin(), main.block().channel(ch).end(), 2.f);
+        std::fill(side.block().channel(0).begin(), side.block().channel(0).end(), .25f);
+        PluginEventBuffer echoed;
+        ok(echoed.prepare());
+        events.reset();
+        const std::array<std::uint8_t, 3> pressure{0xa0, 60, 100};
+        PluginEvent poly;
+        poly.kind = PluginEventKind::midi1;
+        poly.port = 0;
+        poly.frame = 5;
+        poly.bytes = pressure;
+        ok(events.add(poly));
+        std::uint32_t requests = 0;
+        ok(instance.pumpMainThread(requests));
+        ok(instance.process(PluginProcess<float>{inputs, outputs, 64, &events, &echoed}));
+        for (std::size_t i = 0; i < 64; ++i)
+            require(out.block().channel(0)[i] == 1.25f && out.block().channel(1)[i] == 1.25f);
+        require(echoed.size() == 0);
+        ok(instance.pumpMainThread(requests));
+        require((requests & pluginEventsDropped) != 0);
+        ok(instance.pumpMainThread(requests));
+        require((requests & pluginEventsDropped) == 0);
+    }
     ok(instance.stop());
     ok(instance.deactivate());
     ok(instance.close());

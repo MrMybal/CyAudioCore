@@ -10,7 +10,9 @@
 #include <choc/audio/choc_AudioFileFormat_Ogg.h>
 #include "WavCodec.h"
 #include <cmath>
+#include <fstream>
 #include <limits>
+#include <system_error>
 namespace cyaudio {
 namespace {
 using Depth = choc::audio::BitDepth;
@@ -51,19 +53,78 @@ choc::audio::AudioFileFormatList formats() {
         list.addFormat(format(f));
     return list;
 }
-double pcmScale(AudioEncoding encoding) {
-    const auto n = static_cast<unsigned>(encoding);
-    if (n > static_cast<unsigned>(AudioEncoding::pcm32))
-        return 1;
+// Integer width of an encoding, zero for float data.
+unsigned integerBits(AudioEncoding e) {
     constexpr unsigned bits[]{8, 16, 24, 32};
-    const double denominator = std::ldexp(1.0, static_cast<int>(bits[n] - 1));
-    return (denominator - 1) / denominator;
+    const auto n = static_cast<unsigned>(e);
+    return n <= static_cast<unsigned>(AudioEncoding::pcm32) ? bits[n] : 0;
 }
 bool valid(const AudioFileInfo& info, std::size_t max) {
     return isFinite(info.sampleRate) && info.sampleRate > 0 && info.sampleRate <= 1e9 &&
            info.channels > 0 && info.channels <= 256 && max > 0 && max <= 1048576 &&
            static_cast<unsigned>(info.encoding) <= static_cast<unsigned>(AudioEncoding::float64);
 }
+// A source without metadata is reported as an empty string; "null" (older reader
+// output) is accepted as the same thing.
+bool emptyMetadata(std::string_view json) {
+    return json.empty() || json == "null";
+}
+// Empty selects the codec default. Otherwise the text must be one of the advertised
+// levels, or the leading token of one ("0" for FLAC's "0 (Fastest)").
+bool knownQuality(choc::audio::AudioFileFormat& codec, const std::string& quality) {
+    if (quality.empty())
+        return true;
+    for (const auto& level : codec.getQualityLevels())
+        if (level == quality || level.substr(0, level.find(' ')) == quality)
+            return true;
+    return false;
+}
+// Everything that can be rejected before a destination is created or written.
+struct WritePlan {
+    std::unique_ptr<choc::audio::AudioFileFormat> codec;
+    choc::audio::AudioFileProperties properties;
+    unsigned flacBits = 0;
+};
+Status plan(AudioFileFormat f, const AudioFileInfo& info, std::string quality, WritePlan& out) {
+    out.codec = format(f);
+    if (!out.codec || !out.codec->supportsWriting())
+        return Status::unsupported_format;
+    const auto depths = out.codec->getSupportedBitDepths();
+    if ((f == AudioFileFormat::oggVorbis
+             ? info.encoding != AudioEncoding::float32
+             : std::find(depths.begin(), depths.end(), depth(info.encoding)) == depths.end()) ||
+        info.channels > out.codec->getMaximumNumChannels() || !knownQuality(*out.codec, quality))
+        return Status::unsupported_format;
+    auto& p = out.properties;
+    p.sampleRate = info.sampleRate;
+    p.numChannels = static_cast<std::uint32_t>(info.channels);
+    p.bitDepth = f == AudioFileFormat::oggVorbis ? Depth::int16 : depth(info.encoding);
+    p.quality = std::move(quality);
+    if (!emptyMetadata(info.metadataJson)) {
+        try {
+            p.metadata = choc::json::parse(info.metadataJson);
+        } catch (const std::bad_alloc&) {
+            throw;
+        } catch (...) {
+            return Status::invalid_argument;
+        }
+    }
+    // CHOC's FLAC codec scales by 2^(bits-1)-1 and truncates; see writeImpl/readImpl.
+    if (f == AudioFileFormat::flac)
+        out.flacBits = integerBits(info.encoding);
+    return Status::ok;
+}
+// Removes an unpublished temporary unless its path was taken over. Declared before the
+// objects that hold the file open, so that it runs after they have closed it.
+struct Discard {
+    std::filesystem::path path;
+    ~Discard() {
+        if (!path.empty()) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);
+        }
+    }
+};
 } // namespace
 std::vector<AudioFormatCapabilities> audioFileFormats() {
     std::vector<AudioFormatCapabilities> result;
@@ -105,7 +166,9 @@ struct AudioFileReader::State {
     std::unique_ptr<choc::audio::AudioFileReader> reader;
     AudioFileInfo info;
     std::size_t max = 0;
-    double scale = 1;
+    // FLAC only: CHOC returns code / (2^(bits-1)-1). The exact code is recovered and
+    // renormalised to the documented code / 2^(bits-1).
+    double flacMaximum = 0, flacScale = 0;
     std::vector<float*> f;
     std::vector<double*> d;
     Status initialise(std::size_t blockFrames) {
@@ -115,13 +178,16 @@ struct AudioFileReader::State {
                 p.numFrames,
                 p.numChannels,
                 p.bitDepth == Depth::unknown ? AudioEncoding::float32 : encoding(p.bitDepth),
-                choc::json::toString(p.metadata)};
+                p.metadata.isVoid() ? std::string{} : choc::json::toString(p.metadata)};
         if (p.formatName == "Ogg-Vorbis" || p.formatName == "MP3")
             info.encoding = AudioEncoding::float32;
         if (!valid(info, blockFrames))
             return Status::invalid_argument;
-        if (p.formatName == "WAV" || p.formatName == "FLAC")
-            scale = pcmScale(info.encoding);
+        if (p.formatName == "FLAC" && p.bitDepth != Depth::unknown)
+            if (const auto bits = integerBits(info.encoding)) {
+                flacMaximum = std::ldexp(1.0, static_cast<int>(bits) - 1) - 1;
+                flacScale = std::ldexp(1.0, 1 - static_cast<int>(bits));
+            }
         f.resize(p.numChannels);
         d.resize(p.numChannels);
         max = blockFrames;
@@ -133,12 +199,15 @@ AudioFileReader::~AudioFileReader() = default;
 AudioFileReader::AudioFileReader(AudioFileReader&&) noexcept = default;
 AudioFileReader& AudioFileReader::operator=(AudioFileReader&&) noexcept = default;
 Status AudioFileReader::open(const std::filesystem::path& path, std::size_t max) noexcept {
+    if (!max || max > 1048576)
+        return Status::invalid_argument;
     try {
-        const auto portable = open(std::make_shared<std::ifstream>(path, std::ios::binary), max);
+        auto file = std::make_shared<std::ifstream>(path, std::ios::binary);
+        if (!*file)
+            return Status::io_error; // Missing or unreadable: not an argument error.
+        const auto portable = open(std::move(file), max);
         if (portable != Status::unsupported_format)
             return portable;
-        if (!max || max > 1048576)
-            return Status::invalid_argument;
         auto next = std::make_unique<State>();
         next->reader = detail::platformReader(path);
         if (!next->reader)
@@ -211,10 +280,13 @@ Status AudioFileReader::readImpl(std::uint64_t first, AudioBlock<T> out,
                 return Status::io_error;
         }
         for (std::size_t ch = 0; ch < out.channels(); ++ch) {
-            if (s.scale != 1)
+            const auto channel = out.channel(ch);
+            if (s.flacScale != 0)
                 for (std::size_t i = 0; i < n; ++i)
-                    out.channel(ch)[i] = static_cast<T>(out.channel(ch)[i] * s.scale);
-            std::fill(out.channel(ch).begin() + n, out.channel(ch).end(), T{});
+                    channel[i] = static_cast<T>(
+                        std::nearbyint(static_cast<double>(channel[i]) * s.flacMaximum) *
+                        s.flacScale);
+            std::fill(channel.begin() + static_cast<std::ptrdiff_t>(n), channel.end(), T{});
         }
         count = n;
         return n < out.frames() ? Status::end_of_stream : Status::ok;
@@ -232,12 +304,88 @@ Status AudioFileReader::read(std::uint64_t first, AudioBlock<double> out, std::s
 }
 struct AudioFileWriter::State {
     std::unique_ptr<choc::audio::AudioFileWriter> writer;
+    // Retained to observe write failures: a failed stream write only raises badbit,
+    // which the codecs' own return values do not always report.
+    std::shared_ptr<std::ostream> stream;
+    // Path overload: the file is written here and replaces destination when finished.
+    std::filesystem::path temporary, destination;
     ProcessSpec spec;
     std::uint64_t frames = 0;
-    double scale = 1;
+    unsigned flacBits = 0;
+    bool failed = false;
     AudioBuffer<double> scratch;
     std::vector<const float*> f;
     std::vector<const double*> d;
+    ~State() {
+        (void)finish(); // Best effort, as when the codec destructors finalised in place.
+    }
+    bool streamFailed() const {
+        return stream && stream->fail();
+    }
+    static Status create(std::shared_ptr<std::ostream> stream, WritePlan plan,
+                         const AudioFileInfo& info, std::size_t max,
+                         std::unique_ptr<State>& out) {
+        auto next = std::make_unique<State>();
+        next->flacBits = plan.flacBits;
+        if (next->flacBits) {
+            const auto status = next->scratch.resize(info.channels, max);
+            if (status != Status::ok)
+                return status;
+        }
+        next->spec = {info.sampleRate, max, info.channels};
+        next->f.resize(info.channels);
+        next->d.resize(info.channels);
+        next->stream = stream;
+        next->writer = plan.codec->createWriter(std::move(stream), std::move(plan.properties));
+        if (!next->writer)
+            return Status::unsupported_format;
+        if (next->streamFailed())
+            return Status::io_error;
+        out = std::move(next);
+        return Status::ok;
+    }
+    // Finalises the codec, checks the stream and publishes a path-owned file. Idempotent.
+    Status finish() noexcept {
+        if (!writer)
+            return failed ? Status::io_error : Status::ok;
+        bool good = !failed;
+        try {
+            if (!writer->flush())
+                good = false;
+            if (auto* native = dynamic_cast<detail::PlatformAudioWriter*>(writer.get()))
+                if (!native->finish())
+                    good = false;
+        } catch (...) {
+            good = false;
+        }
+        writer.reset(); // Stream codecs write their last bytes here.
+        if (stream) {
+            try {
+                // Only a stream this object opened is closed; a caller's stream is flushed.
+                auto* file =
+                    temporary.empty() ? nullptr : dynamic_cast<std::ofstream*>(stream.get());
+                if (file)
+                    file->close();
+                else
+                    stream->flush();
+            } catch (...) {
+                good = false;
+            }
+            if (stream->fail())
+                good = false;
+            stream.reset();
+        }
+        if (!temporary.empty()) {
+            if (!good) {
+                std::error_code ec;
+                std::filesystem::remove(temporary, ec); // The destination stays untouched.
+            } else if (!detail::replaceFile(temporary, destination))
+                good = false; // Complete data is kept in the temporary rather than lost.
+            temporary.clear();
+        }
+        failed = !good;
+        return good ? Status::ok : Status::io_error;
+    }
 };
 AudioFileWriter::AudioFileWriter() = default;
 AudioFileWriter::~AudioFileWriter() = default;
@@ -249,11 +397,13 @@ Status AudioFileWriter::open(const std::filesystem::path& path, AudioFileFormat 
     if (!valid(info, max))
         return Status::invalid_argument;
     try {
+        Discard discard; // Destroyed last: after the stream/encoder below closed the file.
+        std::unique_ptr<State> next;
         if (f == AudioFileFormat::mp3 || f == AudioFileFormat::m4a || f == AudioFileFormat::aac ||
             f == AudioFileFormat::wma) {
             if (info.channels > 2 || info.encoding != AudioEncoding::pcm16 ||
                 info.sampleRate != std::floor(info.sampleRate) || info.sampleRate > 384000 ||
-                !info.metadataJson.empty() ||
+                !emptyMetadata(info.metadataJson) ||
                 (!quality.empty() && quality != "128" && quality != "192" && quality != "256" &&
                  quality != "320"))
                 return Status::unsupported_format;
@@ -264,27 +414,34 @@ Status AudioFileWriter::open(const std::filesystem::path& path, AudioFileFormat 
             props.numChannels = static_cast<std::uint32_t>(info.channels);
             props.bitDepth = Depth::int16;
             props.quality = std::move(quality);
-            auto next = std::make_unique<State>();
-            next->writer = detail::platformWriter(path, f, std::move(props));
-            if (!next->writer)
-                return Status::unsupported_format;
+            next = std::make_unique<State>();
             next->spec = {info.sampleRate, max, info.channels};
             next->f.resize(info.channels);
             next->d.resize(info.channels);
-            state_.swap(next);
-            return Status::ok;
+            discard.path = detail::temporarySibling(path);
+            next->writer = detail::platformWriter(discard.path, f, std::move(props));
+            if (!next->writer)
+                return Status::unsupported_format;
+        } else {
+            // Format, encoding, quality and metadata are validated before any file exists.
+            WritePlan prepared;
+            auto status = plan(f, info, std::move(quality), prepared);
+            if (status != Status::ok)
+                return status;
+            discard.path = detail::temporarySibling(path);
+            auto file = std::make_shared<std::ofstream>(discard.path,
+                                                        std::ios::binary | std::ios::trunc);
+            if (!*file)
+                return Status::io_error;
+            status = State::create(std::move(file), std::move(prepared), info, max, next);
+            if (status != Status::ok)
+                return status;
         }
-        auto codec = format(f);
-        if (!codec || !codec->supportsWriting())
-            return Status::unsupported_format;
-        const auto depths = codec->getSupportedBitDepths();
-        if ((f == AudioFileFormat::oggVorbis
-                 ? info.encoding != AudioEncoding::float32
-                 : std::find(depths.begin(), depths.end(), depth(info.encoding)) == depths.end()) ||
-            info.channels > codec->getMaximumNumChannels())
-            return Status::unsupported_format;
-        return open(std::make_shared<std::ofstream>(path, std::ios::binary | std::ios::trunc), f,
-                    info, std::move(quality), max);
+        next->temporary = std::move(discard.path);
+        discard.path.clear();
+        next->destination = path;
+        state_.swap(next);
+        return Status::ok;
     } catch (const std::bad_alloc&) {
         return Status::allocation_failed;
     } catch (...) {
@@ -297,36 +454,14 @@ Status AudioFileWriter::open(std::shared_ptr<std::ostream> stream, AudioFileForm
     if (!valid(info, max) || !stream || !*stream)
         return Status::invalid_argument;
     try {
-        auto codec = format(f);
-        if (!codec || !codec->supportsWriting())
-            return Status::unsupported_format;
-        const auto depths = codec->getSupportedBitDepths();
-        if ((f == AudioFileFormat::oggVorbis
-                 ? info.encoding != AudioEncoding::float32
-                 : std::find(depths.begin(), depths.end(), depth(info.encoding)) == depths.end()) ||
-            info.channels > codec->getMaximumNumChannels())
-            return Status::unsupported_format;
-        auto next = std::make_unique<State>();
-        if (f == AudioFileFormat::wav || f == AudioFileFormat::flac)
-            next->scale = pcmScale(info.encoding);
-        if (next->scale != 1) {
-            const auto status = next->scratch.resize(info.channels, max);
-            if (status != Status::ok)
-                return status;
-        }
-        choc::audio::AudioFileProperties p;
-        p.sampleRate = info.sampleRate;
-        p.numChannels = static_cast<std::uint32_t>(info.channels);
-        p.bitDepth = f == AudioFileFormat::oggVorbis ? Depth::int16 : depth(info.encoding);
-        p.quality = std::move(quality);
-        if (!info.metadataJson.empty())
-            p.metadata = choc::json::parse(info.metadataJson);
-        next->spec = {info.sampleRate, max, info.channels};
-        next->f.resize(info.channels);
-        next->d.resize(info.channels);
-        next->writer = codec->createWriter(std::move(stream), std::move(p));
-        if (!next->writer)
-            return Status::unsupported_format;
+        WritePlan prepared;
+        auto status = plan(f, info, std::move(quality), prepared);
+        if (status != Status::ok)
+            return status;
+        std::unique_ptr<State> next;
+        status = State::create(std::move(stream), std::move(prepared), info, max, next);
+        if (status != Status::ok)
+            return status;
         state_.swap(next);
         return Status::ok;
     } catch (const std::bad_alloc&) {
@@ -346,21 +481,35 @@ template <Sample T> Status AudioFileWriter::writeImpl(AudioBlock<const T> in) no
     if (in.frames() > s.spec.maxBlockFrames ||
         in.frames() > std::numeric_limits<std::uint64_t>::max() - s.frames)
         return Status::block_too_large;
+    if (s.failed || !s.writer)
+        return Status::io_error; // The stream is unusable after a failed write.
     if (!in.frames())
         return Status::ok;
-    for (std::size_t ch = 0; ch < in.channels(); ++ch)
+    // One branch-free pass per channel: x * 0 is zero for finite samples, NaN otherwise.
+    for (std::size_t ch = 0; ch < in.channels(); ++ch) {
+        T poison{};
         for (auto sample : in.channel(ch))
-            if (!isFinite(sample))
-                return Status::invalid_argument;
+            poison += sample * T{};
+        if (!(poison == T{}))
+            return Status::invalid_argument;
+    }
     try {
         bool written = false;
-        if (s.scale != 1) {
+        if (s.flacBits) {
+            // Round to nearest here, then aim at the middle of the interval CHOC
+            // truncates to that code. The most negative code is outside its range.
+            const auto scale = std::ldexp(1.0, static_cast<int>(s.flacBits) - 1);
+            const auto maximum = scale - 1;
             auto scratch = s.scratch.block(in.frames());
             for (std::size_t ch = 0; ch < in.channels(); ++ch) {
-                for (std::size_t i = 0; i < in.frames(); ++i)
-                    scratch.channel(ch)[i] =
-                        std::clamp(static_cast<double>(in.channel(ch)[i]), -1.0, 1.0) / s.scale;
-                s.d[ch] = scratch.channel(ch).data();
+                const auto source = in.channel(ch);
+                const auto target = scratch.channel(ch);
+                for (std::size_t i = 0; i < in.frames(); ++i) {
+                    const auto code = static_cast<double>(
+                        detail::aiff::quantise(static_cast<double>(source[i]), scale));
+                    target[i] = code == 0 ? 0.0 : (code + (code > 0 ? 0.5 : -0.5)) / maximum;
+                }
+                s.d[ch] = target.data();
             }
             written = s.writer->appendFrames(choc::buffer::createChannelArrayView(
                 s.d.data(), static_cast<std::uint32_t>(in.channels()),
@@ -378,13 +527,16 @@ template <Sample T> Status AudioFileWriter::writeImpl(AudioBlock<const T> in) no
                 pointers.data(), static_cast<std::uint32_t>(in.channels()),
                 static_cast<std::uint32_t>(in.frames())));
         }
-        if (!written)
+        if (!written || s.streamFailed()) {
+            s.failed = true;
             return Status::io_error;
+        }
         s.frames += in.frames();
         return Status::ok;
     } catch (const std::bad_alloc&) {
         return Status::allocation_failed;
     } catch (...) {
+        s.failed = true;
         return Status::io_error;
     }
 }
@@ -395,21 +547,21 @@ Status AudioFileWriter::write(AudioBlock<const double> in) noexcept {
     return writeImpl(in);
 }
 Status AudioFileWriter::flush() noexcept {
-    if (!state_)
+    if (!state_ || !state_->writer)
         return Status::not_prepared;
+    auto& s = *state_;
     try {
-        return state_->writer->flush() ? Status::ok : Status::io_error;
+        if (!s.failed && s.writer->flush() && !s.streamFailed())
+            return Status::ok;
     } catch (...) {
-        return Status::io_error;
     }
+    s.failed = true;
+    return Status::io_error;
 }
 Status AudioFileWriter::close() noexcept {
     if (!state_)
         return Status::ok;
-    auto status = flush();
-    if (auto* native = dynamic_cast<detail::PlatformAudioWriter*>(state_->writer.get()))
-        if (!native->finish())
-            status = Status::io_error;
+    const auto status = state_->finish();
     state_.reset();
     return status;
 }

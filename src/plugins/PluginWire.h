@@ -7,7 +7,9 @@
 #include <cstring>
 namespace cyaudio::detail::wire {
 inline constexpr std::uint64_t magic = 0x3150434950534443ull;
-inline constexpr std::uint32_t version = 1;
+// Version 2: audio wake-up flag/word, control wake word, seqlocked plugin timing and
+// the restart command. Mismatched client/worker binaries refuse to pair.
+inline constexpr std::uint32_t version = 2;
 enum class Command : std::uint32_t {
     save = 1,
     load,
@@ -18,7 +20,8 @@ enum class Command : std::uint32_t {
     showEditor,
     focusEditor,
     keyEditor,
-    wheelEditor
+    wheelEditor,
+    restart
 };
 struct Transport {
     std::int64_t songFrame = 0;
@@ -91,17 +94,24 @@ struct Header {
     std::array<char, 4096> pluginId{};
     std::array<std::byte, 128> bootSeparation{};
     std::atomic<std::uint32_t> boot{0}, shutdown{0}, failure{0}, requests{0}, heartbeat{0};
-    std::uint32_t inputCount = 0, outputCount = 0, latency = 0, tail = 0, timingFlags = 0;
+    // Plugin timing, published by the worker main thread whenever it changes. The
+    // sequence is odd while the three values are being written (seqlock).
+    std::atomic<std::uint32_t> timingSequence{0}, latency{0}, tail{0}, timingFlags{0};
+    std::uint32_t inputCount = 0, outputCount = 0;
     std::array<std::uint32_t, 64> inputChannels{}, outputChannels{};
     std::array<std::byte, 128> audioSeparation{};
     std::atomic<std::uint32_t> audioState{0};
+    // audioSleeping is set by the worker audio thread before it waits and makes the
+    // client issue its non-blocking wake. audioWake/controlWake are the wake words
+    // (futex words where the platform has no named event).
+    std::atomic<std::uint32_t> audioSleeping{0}, audioWake{0};
     std::uint64_t sequence = 0;
     std::int64_t steadyFrame = -1;
     std::uint32_t inputEvents = 0, inputBytes = 0, outputEvents = 0, outputBytes = 0,
                   audioStatus = 0, hasTransport = 0;
     Transport transport;
     std::array<std::byte, 128> controlSeparation{};
-    std::atomic<std::uint32_t> controlState{0};
+    std::atomic<std::uint32_t> controlState{0}, controlWake{0};
     std::uint32_t command = 0, controlStatus = 0, controlBytes = 0, windowApi = 0, floating = 0,
                   width = 0, height = 0;
     std::uint64_t windowHandle = 0;
@@ -111,6 +121,15 @@ struct Header {
     std::atomic<std::uint32_t> requestedWidth{0}, requestedHeight{0};
 };
 static_assert(std::atomic<std::uint32_t>::is_always_lock_free);
+static_assert(sizeof(std::atomic<std::uint32_t>) == sizeof(std::uint32_t));
+// Dimensions fixed at launch. The mapping is writable by the other process, so each
+// side takes one private copy and never re-reads the header for a bound afterwards.
+struct Limits {
+    std::uint32_t frames = 0, events = 0, channels = 0, payload = 0, stateBytes = 0, flags = 0;
+};
+inline Limits limits(const Header& h) noexcept {
+    return {h.frames, h.events, h.channels, h.payload, h.stateBytes, h.flags};
+}
 struct Layout {
     std::size_t input = 0, output = 0, inputEvents = 0, outputEvents = 0, inputPayload = 0,
                 outputPayload = 0, control = 0, total = 0;
@@ -147,6 +166,20 @@ inline bool valid(const Header& h) noexcept {
         return false;
     return layout(h).total == h.mappingBytes && h.mappingBytes <= 512 * 1024 * 1024;
 }
+// True when a header read back from the mapping still carries exactly the launch
+// configuration. A self-consistent but different geometry is rejected.
+inline bool sameConfiguration(const Header& shared, const Header& configured) noexcept {
+    return shared.magicValue == configured.magicValue &&
+           shared.mappingBytes == configured.mappingBytes &&
+           shared.protocol == configured.protocol && shared.wordBits == configured.wordBits &&
+           shared.headerBytes == configured.headerBytes &&
+           shared.eventBytes == configured.eventBytes && shared.format == configured.format &&
+           shared.minimumFrames == configured.minimumFrames &&
+           shared.frames == configured.frames && shared.events == configured.events &&
+           shared.channels == configured.channels && shared.payload == configured.payload &&
+           shared.stateBytes == configured.stateBytes && shared.flags == configured.flags &&
+           shared.parentPid == configured.parentPid && shared.sampleRate == configured.sampleRate;
+}
 inline Status writeEvents(const PluginEventBuffer* in, Event* records, std::uint8_t* payload,
                           std::uint32_t maximumEvents, std::uint32_t maximumBytes,
                           std::uint32_t& count, std::uint32_t& used) noexcept {
@@ -179,6 +212,9 @@ inline Status writeEvents(const PluginEventBuffer* in, Event* records, std::uint
     }
     return Status::ok;
 }
+// count/used are values the caller fetched once; the maxima are its private limits.
+// Each record is copied out of the shared mapping before it is validated, so the
+// other process cannot change it between the check and the use.
 inline Status readEvents(const Event* records, const std::uint8_t* payload, std::uint32_t count,
                          std::uint32_t used, std::uint32_t maximumEvents,
                          std::uint32_t maximumBytes, std::uint32_t frames,
@@ -187,7 +223,8 @@ inline Status readEvents(const Event* records, const std::uint8_t* payload, std:
     if (count > maximumEvents || used > maximumBytes)
         return Status::invalid_argument;
     for (std::uint32_t i = 0; i < count; ++i) {
-        const auto& e = records[i];
+        Event e;
+        std::memcpy(static_cast<void*>(&e), records + i, sizeof(Event));
         if (e.kind > std::uint32_t(PluginEventKind::ump) || e.frame >= frames || e.offset > used ||
             e.size > used - e.offset || e.wordCount > 4 || e.port < -1 || e.port > 32767 ||
             e.channel < -1 || e.channel > 15 || e.key < -1 || e.key > 127 ||
@@ -249,7 +286,36 @@ class Child {
     int pid = -1;
 #endif
 };
+// Cross-process wake-up: a named auto-reset event on Windows, a futex on the shared
+// word on Linux, a short polling wait on that word elsewhere. signal() never blocks,
+// allocates or waits and may be called from the client audio path.
+class Wake {
+  public:
+    Wake() = default;
+    ~Wake();
+    Wake(const Wake&) = delete;
+    Wake& operator=(const Wake&) = delete;
+    Status create(std::string_view mapping, std::string_view suffix,
+                  std::atomic<std::uint32_t>& word) noexcept;
+    Status open(std::string_view mapping, std::string_view suffix,
+                std::atomic<std::uint32_t>& word) noexcept;
+    // Waiter: read the token, re-check the condition, then wait(token, ms). A signal
+    // issued after the token was read ends the wait immediately.
+    std::uint32_t token() const noexcept;
+    void wait(std::uint32_t token, unsigned milliseconds) noexcept;
+    void signal() noexcept;
+    // Like wait(), and also returns when native window messages are pending.
+    void waitOrMessages(std::uint32_t token, unsigned milliseconds) noexcept;
+
+  private:
+    std::atomic<std::uint32_t>* word_ = nullptr;
+#if defined(_WIN32)
+    void* handle_ = nullptr;
+#endif
+};
 std::uint32_t processId() noexcept;
 bool parentRunning(std::uint32_t) noexcept;
 void pumpNativeMessages() noexcept;
+// Best-effort scheduling raise for the worker's audio thread; never fails.
+void raiseAudioThreadPriority() noexcept;
 } // namespace cyaudio::detail::wire

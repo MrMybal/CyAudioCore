@@ -281,6 +281,66 @@ void ciDevice() {
                 validCiMuid(d.muid()),
             "MUID collision recovery");
 }
+// A full peer cache evicts the least recently seen peer and still answers Discovery;
+// a MUID collision reports every dropped peer.
+void ciPeerTable() {
+    struct Log {
+        std::array<std::uint32_t, 16> added{}, removed{};
+        std::size_t addedCount = 0, removedCount = 0;
+        unsigned replies = 0, invalidations = 0;
+        std::uint32_t replyTo = 0;
+    } log;
+    CiCallbacks callbacks;
+    callbacks.context = &log;
+    callbacks.send = [](void* p, unsigned, std::span<const std::uint8_t> payload) noexcept {
+        auto& l = *static_cast<Log*>(p);
+        CiMessageView m;
+        if (parseCiMessage(payload, m) != Status::ok)
+            return Status::invalid_argument;
+        if (m.type == 0x71) {
+            ++l.replies;
+            l.replyTo = m.destination;
+        }
+        if (m.type == 0x7e)
+            ++l.invalidations;
+        return Status::ok;
+    };
+    callbacks.peer = [](void* p, const CiPeer& peer, bool removed) noexcept {
+        auto& l = *static_cast<Log*>(p);
+        auto& list = removed ? l.removed : l.added;
+        auto& count = removed ? l.removedCount : l.addedCount;
+        if (count < list.size())
+            list[count++] = peer.muid;
+    };
+    CiConfiguration config;
+    config.muid = 1;
+    config.peers = 2;
+    MidiCiDevice device;
+    ok(device.prepare(config, callbacks));
+    auto inquiry = [&](std::uint32_t source) {
+        std::array<std::uint8_t, 32> body{};
+        std::array<std::uint8_t, 64> message{};
+        std::size_t n = 0, size = 0;
+        ok(makeCiDiscoveryBody(CiDiscovery{}, false, 2, body, n));
+        ok(makeCiMessage({0x7f, 0x70, 2, source, ciBroadcastMuid, {body.data(), n}}, message,
+                         size));
+        return device.process({message.data(), size}, 0);
+    };
+    ok(inquiry(10));
+    ok(inquiry(11));
+    ok(inquiry(10)); // 11 is now the least recently seen.
+    ok(inquiry(12));
+    const auto peers = device.peers();
+    require(log.replies == 4 && log.replyTo == 12, "full peer cache still answers Discovery");
+    require(peers.size() == 2 && log.removedCount == 1 && log.removed[0] == 11 &&
+                std::any_of(peers.begin(), peers.end(), [](auto& p) { return p.muid == 10; }) &&
+                std::any_of(peers.begin(), peers.end(), [](auto& p) { return p.muid == 12; }),
+            "least recently seen peer evicted with its notification");
+    ok(inquiry(1)); // Another device uses our MUID.
+    require(device.muid() != 1 && device.peers().empty() && log.invalidations == 1 &&
+                log.removedCount == 3,
+            "MUID collision reports every dropped peer");
+}
 void ciProgressTimeout() {
     MidiCiDevice a, b;
     CiWire x, y;
@@ -344,6 +404,12 @@ void endpoint() {
             "UMP negotiated MIDI2");
     ok(a.negotiate(1, 100));
     require(a.poll(3100) == Status::timed_out && !a.pending(), "UMP negotiation timeout");
+    // A packet that arrives after the deadline reports the timeout and is still answered.
+    ok(a.negotiate(1, 5000));
+    const auto sent = x.size;
+    require(a.process(umpEndpointDiscovery(1), 8000) == Status::timed_out && !a.pending() &&
+                x.size == sent + 1 && x.packets[sent].words[0] == 0xf0010101,
+            "expired negotiation does not discard the peer's packet");
     runRealtimeAudit(
         [](void* p) noexcept {
             auto& n = *static_cast<UmpEndpointNegotiator*>(p);
@@ -438,6 +504,53 @@ void nativeQueues() {
     require(notes == 1000 && messages == 20 && device.droppedPackets() == 0,
             "parallel note/CI producers and shared UMP consumer");
     device.close();
+    // Sustained SysEx: the worker keeps draining while work remains, and a full loopback
+    // input is backpressure, never loss. 16 x 4096 bytes are 10928 packets; at the former
+    // 32 packets per scheduler tick this took more than five seconds on a default Windows tick.
+    options.incomingPackets = 256;
+    options.outgoingPackets = 16;
+    options.queuedSysEx = 16;
+    options.maximumSysExBytes = 4096;
+    ok(device.openLoopback(options));
+    const auto began = std::chrono::steady_clock::now();
+    std::thread bulk([&] {
+        std::vector<std::uint8_t> data(4096);
+        for (unsigned m = 0; m < 16; ++m) {
+            for (std::size_t i = 0; i < data.size(); ++i)
+                data[i] = static_cast<std::uint8_t>((i * 7 + m) % 128);
+            while (device.sendSysEx7(5, data) == Status::update_queue_full)
+                std::this_thread::yield();
+        }
+    });
+    UmpSysExAssembler large;
+    ok(large.prepare(4096));
+    unsigned received = 0;
+    bool intact = true;
+    const auto bulkDeadline = began + std::chrono::seconds(5);
+    while (received < 16 && intact && std::chrono::steady_clock::now() < bulkDeadline) {
+        Midi2TimedPacket p;
+        if (device.read(p) != Status::ok) {
+            std::this_thread::yield();
+            continue;
+        }
+        intact = large.append(p.packet) == Status::ok;
+        const auto body = large.message();
+        if (intact && !body.empty()) {
+            intact = body.size() == 4096;
+            for (std::size_t i = 0; intact && i < body.size(); ++i)
+                intact = body[i] == (i * 7 + received) % 128;
+            ++received;
+        }
+    }
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - began)
+                             .count();
+    bulk.join();
+    require(intact && received == 16 && device.droppedPackets() == 0,
+            "sustained SysEx drains without pacing loss");
+    std::cout << "MIDI2 loopback SysEx 65536 bytes in " << elapsed << " ms\n";
+    device.close();
+    options = {};
     options.incomingPackets = 4;
     options.outgoingPackets = 1;
     options.queuedSysEx = 1;
@@ -594,6 +707,7 @@ void descriptors() {
 void midi2ProtocolRegression() {
     codecs();
     ciDevice();
+    ciPeerTable();
     ciProgressTimeout();
     endpoint();
 }

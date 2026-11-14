@@ -1,7 +1,12 @@
+#include "TestPaths.h"
 #include <algorithm>
+#include <bit>
+#include <chrono>
 #include <complex>
 #include <cyaudio/CyAudioCore.h>
+#include <fstream>
 #include <iostream>
+#include <limits>
 #include <numbers>
 #include <source_location>
 #include <stdexcept>
@@ -165,6 +170,117 @@ void instruments() {
         },
         &audit);
     ok(audit.status);
+    // Sample presets load an audio file named by the preset: both are untrusted.
+    const auto folder =
+        cyaudio::testSupport::temporaryDirectory() /
+        ("cyaudio-instrument-" +
+         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+    const auto base = folder / "samples";
+    std::filesystem::create_directories(base / "sub");
+    struct Cleanup {
+        std::filesystem::path path;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove_all(path, ec);
+        }
+    } cleanup{folder};
+    const auto floatWav = [](const std::filesystem::path& file, unsigned channels,
+                             const std::vector<float>& interleaved) {
+        std::string raw;
+        const auto put = [&](std::uint64_t v, unsigned n) {
+            for (unsigned i = 0; i < n; ++i)
+                raw.push_back(char(v >> (8 * i)));
+        };
+        const auto size = std::uint32_t(interleaved.size() * 4);
+        raw += "RIFF";
+        put(36 + size, 4);
+        raw += "WAVEfmt ";
+        put(16, 4);
+        put(3, 2);
+        put(channels, 2);
+        put(48000, 4);
+        put(48000 * 4 * channels, 4);
+        put(4 * channels, 2);
+        put(32, 2);
+        raw += "data";
+        put(size, 4);
+        for (auto sample : interleaved)
+            put(std::bit_cast<std::uint32_t>(sample), 4);
+        std::ofstream(file, std::ios::binary).write(raw.data(), std::streamsize(raw.size()));
+    };
+    std::vector<float> tone(256);
+    for (std::size_t i = 0; i < tone.size(); ++i)
+        tone[i] = float(.5 * std::sin(2 * std::numbers::pi * double(i) / 64));
+    floatWav(base / "tone.wav", 1, tone);
+    floatWav(folder / "outside.wav", 1, tone);
+    auto poisoned = tone;
+    poisoned[100] = std::numeric_limits<float>::quiet_NaN();
+    floatWav(base / "nan.wav", 1, poisoned);
+    poisoned[100] = std::numeric_limits<float>::infinity();
+    floatWav(base / "inf.wav", 1, poisoned);
+    floatWav(base / "wide.wav", 4, std::vector<float>(4 * 256, .25f));
+    InstrumentPreset sampled;
+    sampled.name = "Sampled";
+    sampled.voices = 2;
+    sampled.source = InstrumentSource::sample;
+    sampled.samplePath = "tone.wav";
+    sampled.parameters.envelope = {0, 0, 1, .01};
+    const ProcessSpec spec{48000, 128, 2};
+    Instrument<float> sampler;
+    ok(sampler.prepare(spec, sampled, base));
+    const auto* kept = sampler.synthesizer();
+    for (const auto* name : {"nan.wav", "inf.wav"}) {
+        sampled.samplePath = name;
+        require(sampler.prepare(spec, sampled, base) == Status::invalid_argument &&
+                    sampler.synthesizer() == kept,
+                "non-finite sample data rejected transactionally");
+    }
+    // The frame limit also bounds memory for wide files.
+    sampled.samplePath = "tone.wav";
+    ok(sampler.prepare(spec, sampled, base, CpuBackend::automatic, 256));
+    require(sampler.prepare(spec, sampled, base, CpuBackend::automatic, 255) ==
+                Status::block_too_large,
+            "sample frame limit");
+    sampled.samplePath = "wide.wav";
+    require(sampler.prepare(spec, sampled, base, CpuBackend::automatic, 256) ==
+                Status::block_too_large,
+            "sample limit accounts for channels");
+    ok(sampler.prepare(spec, sampled, base, CpuBackend::automatic, 512));
+    // Optional confinement of the preset's path to the host's base directory.
+    for (const auto& inside : {std::filesystem::path("tone.wav"),
+                               std::filesystem::path("sub") / ".." / "tone.wav"}) {
+        sampled.samplePath = inside;
+        ok(sampler.prepare(spec, sampled, base, CpuBackend::automatic, 67108864, true));
+    }
+    for (const auto& outside : {std::filesystem::path("..") / "outside.wav",
+                                std::filesystem::path("sub") / ".." / ".." / "outside.wav",
+                                folder / "outside.wav"}) {
+        sampled.samplePath = outside;
+        ok(sampler.prepare(spec, sampled, base));
+        require(sampler.prepare(spec, sampled, base, CpuBackend::automatic, 67108864, true) ==
+                    Status::invalid_argument,
+                "sample path confined to the base directory");
+    }
+    // Saving replaces the destination only by a complete file.
+    const auto presetPath = folder / "preset.json";
+    {
+        std::ofstream old(presetPath, std::ios::binary);
+        old << "previous";
+    }
+    ok(saveInstrumentPreset(presetPath, preset));
+    InstrumentPreset reloaded;
+    ok(loadInstrumentPreset(presetPath, reloaded));
+    unsigned files = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(folder))
+        files += entry.is_regular_file();
+    require(reloaded.name == preset.name && reloaded.cycle == preset.cycle && files == 2,
+            "preset saved atomically, no temporary left");
+    auto invalid = preset;
+    invalid.voices = 0;
+    require(saveInstrumentPreset(presetPath, invalid) == Status::invalid_argument &&
+                loadInstrumentPreset(presetPath, reloaded) == Status::ok &&
+                reloaded.name == preset.name,
+            "failed save keeps the previous preset");
 }
 #endif
 }

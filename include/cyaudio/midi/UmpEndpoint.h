@@ -25,6 +25,7 @@ class UmpEndpointNegotiator {
     Status prepare(UmpEndpointCapabilities, Sender, void*) noexcept;
     Status negotiate(unsigned preferredProtocol, std::uint64_t nowMs, bool receiveJr = false,
                      bool sendJr = false) noexcept;
+    // timed_out reports an expired negotiation; the packet has still been handled.
     Status process(const UmpPacket&, std::uint64_t nowMs) noexcept;
     Status poll(std::uint64_t nowMs) noexcept;
     void reset() noexcept;
@@ -46,5 +47,6 @@ class UmpEndpointNegotiator {
     std::uint64_t started_ = 0;
     bool pending_ = false, info_ = false, current_ = false, requested_ = false;
     Status advance() noexcept;
+    Status handle(const UmpPacket&) noexcept;
 };
 } // namespace cyaudio

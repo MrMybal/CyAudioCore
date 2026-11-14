@@ -1,6 +1,7 @@
 // Original MIT fixture. CLAP declarations: third_party/licenses/clap.txt
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <clap/clap.h>
 #include <cmath>
@@ -33,6 +34,15 @@ struct Fixture {
     const clap_host_t* host = nullptr;
     double gain = .5;
     bool active = false, running = false, editor = false;
+    // Regression triggers. A loaded gain of 1.984375 / 1.96875 makes the next one /
+    // two activations fail. SysEx F0 7D 45 F7 asks for a restart after which the
+    // reported latency is 23 instead of 17.
+    // SysEx F0 7D 46 F7 blocks the next main-thread callback for 600 ms, like a modal
+    // menu or dialog loop would.
+    int failActivations = 0;
+    std::atomic<bool> stallMain{false};
+    std::atomic<std::uint32_t> nextLatency{17};
+    std::uint32_t latency = 17;
     std::uint32_t width = 320, height = 160;
 #if defined(_WIN32)
     HWND child = nullptr;
@@ -65,6 +75,14 @@ struct Fixture {
                     const auto& sysex = *reinterpret_cast<const clap_event_midi_sysex_t*>(e);
                     if (sysex.size == 4 && sysex.buffer[1] == 0x7d && sysex.buffer[2] == 0x44)
                         std::this_thread::sleep_for(std::chrono::milliseconds(150));
+                    if (sysex.size == 4 && sysex.buffer[1] == 0x7d && sysex.buffer[2] == 0x45) {
+                        nextLatency.store(23);
+                        host->request_restart(host);
+                    }
+                    if (sysex.size == 4 && sysex.buffer[1] == 0x7d && sysex.buffer[2] == 0x46) {
+                        stallMain.store(true);
+                        host->request_callback(host);
+                    }
                 }
                 if (e->type == CLAP_EVENT_PARAM_VALUE)
                     gain = reinterpret_cast<const clap_event_param_value_t*>(e)->value;
@@ -101,9 +119,15 @@ struct Fixture {
                   [](const clap_plugin_t* p) noexcept { delete &self(p); },
                   [](const clap_plugin_t* p, double, std::uint32_t, std::uint32_t) noexcept {
                       auto& s = self(p);
+                      if (s.failActivations > 0) {
+                          --s.failActivations;
+                          return false;
+                      }
                       s.active = s.thread(false);
-                      if (s.active)
+                      if (s.active) {
+                          s.latency = s.nextLatency.load();
                           s.host->request_callback(s.host);
+                      }
                       return s.active;
                   },
                   [](const clap_plugin_t* p) noexcept { self(p).active = false; },
@@ -124,6 +148,8 @@ struct Fixture {
                       auto& s = self(p);
                       if (!s.thread(false))
                           return;
+                      if (s.stallMain.exchange(false))
+                          std::this_thread::sleep_for(std::chrono::milliseconds(600));
                       const auto* state = static_cast<const clap_host_state_t*>(
                           s.host->get_extension(s.host, CLAP_EXT_STATE));
                       if (state)
@@ -240,9 +266,11 @@ const void* CLAP_ABI Fixture::extension(const clap_plugin_t*, const char* id) no
             if (!std::isfinite(v) || v < 0 || v > 2)
                 return false;
             self(p).gain = v;
+            self(p).failActivations = v == 1.984375 ? 1 : v == 1.96875 ? 2 : 0;
             return true;
         }};
-    static const clap_plugin_latency_t latency{[](const clap_plugin_t*) noexcept { return 17u; }};
+    static const clap_plugin_latency_t latency{
+        [](const clap_plugin_t* p) noexcept { return self(p).latency; }};
     static const clap_plugin_tail_t tail{[](const clap_plugin_t*) noexcept { return 64u; }};
     static const clap_plugin_gui_t gui{
         [](const clap_plugin_t*, const char* api, bool floating) noexcept {

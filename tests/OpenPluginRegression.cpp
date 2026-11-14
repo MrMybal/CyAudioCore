@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring>
 #include <iostream>
 #include <source_location>
 #include <stdexcept>
@@ -129,6 +130,127 @@ void run(const std::filesystem::path& path, PluginFormat format, std::uint32_t g
     }
     ok(plugin.close());
 }
+// An output event the host cannot place is dropped and reported; the block is kept.
+void rejectedOutput(const std::filesystem::path& path, PluginFormat format) {
+    const bool lv2 = format == PluginFormat::lv2;
+    std::unique_ptr<PluginProvider> provider;
+    ok(createPluginProvider(format, provider));
+    PluginInstance plugin;
+    ok(provider->create(path, lv2 ? "urn:cydsp:lv2-fixture" : "jsfx", {}, plugin));
+    PluginPrepareOptions options;
+    options.maximumFrames = 64;
+    ok(plugin.activate(options));
+    ok(plugin.start());
+    AudioBuffer<float> input, output, side;
+    ok(side.resize(1, 64));
+    std::fill(side.block().channel(0).begin(), side.block().channel(0).end(), .125f);
+    ok(input.resize(2, 64));
+    ok(output.resize(2, 64));
+    for (auto ch : {0u, 1u})
+        std::fill(input.block().channel(ch).begin(), input.block().channel(ch).end(), 2.f);
+    std::array<AudioBlock<const float>, 2> allIns{input.block(), side.block()};
+    std::span<const AudioBlock<const float>> ins(allIns.data(), lv2 ? 2u : 1u);
+    std::array<AudioBlock<float>, 1> outs{output.block()};
+    PluginEventBuffer events, returned;
+    ok(events.prepare(16, 64));
+    ok(returned.prepare(16, 64));
+    PluginEvent trigger;
+    trigger.kind = PluginEventKind::parameterValue;
+    trigger.id = lv2 ? 4u : 7u;
+    trigger.value = lv2 ? 1.75 : .5;
+    ok(events.add(trigger));
+    std::uint32_t requests = 0;
+    ok(plugin.pumpMainThread(requests));
+    require((requests & pluginEventsDropped) == 0);
+    ok(plugin.process(PluginProcess<float>{ins, outs, 64, &events, &returned}));
+    const float expected = lv2 ? 3.75f : 1.5f;
+    for (std::size_t i = 0; i < 64; ++i)
+        require(output.block().channel(0)[i] == expected &&
+                output.block().channel(1)[i] == expected);
+    require(returned.size() == 0);
+    ok(plugin.pumpMainThread(requests));
+    require((requests & pluginEventsDropped) != 0);
+    ok(plugin.pumpMainThread(requests));
+    require((requests & pluginEventsDropped) == 0);
+    // A very quiet note-on stays a note-on: MIDI velocity 0 would mean note-off. Both
+    // fixtures echo their MIDI input.
+    events.reset();
+    PluginEvent quiet;
+    quiet.kind = PluginEventKind::noteOn;
+    quiet.port = 0;
+    quiet.channel = 1;
+    quiet.key = 60;
+    quiet.value = .001;
+    ok(events.add(quiet));
+    ok(plugin.process(PluginProcess<float>{ins, outs, 64, &events, &returned}));
+    require(returned.size() == 1 && returned.event(0)->bytes.size() == 3 &&
+            returned.event(0)->bytes[0] == 0x91 && returned.event(0)->bytes[1] == 60 &&
+            returned.event(0)->bytes[2] == 1);
+    ok(plugin.stop());
+    ok(plugin.deactivate());
+    ok(plugin.close());
+}
+// gain.jsfx: @init history=0; @sample history+=1; @serialize file_var(0,history).
+float jsfxHistory(const std::vector<std::uint8_t>& state) {
+    const auto word = [&](std::size_t at) {
+        std::uint32_t value = 0;
+        for (unsigned i = 0; i < 4; ++i)
+            value |= std::uint32_t(state[at + i]) << (8 * i);
+        return value;
+    };
+    require(state.size() >= 16);
+    const auto sliders = word(8), bytes = word(12);
+    require(bytes == 4 && state.size() == 16 + std::size_t(sliders) * 12 + 4);
+    float history = 0;
+    std::memcpy(&history, state.data() + 16 + std::size_t(sliders) * 12, 4);
+    return history;
+}
+// Restored @serialize state must survive the @init of activation and the first block,
+// including a stopped-to-playing transport transition, and later reactivations.
+void jsfxSerialize(const std::filesystem::path& path) {
+    std::unique_ptr<PluginProvider> provider;
+    ok(createPluginProvider(PluginFormat::jsfx, provider));
+    PluginPrepareOptions options;
+    options.maximumFrames = 64;
+    AudioBuffer<float> input, output;
+    ok(input.resize(2, 64));
+    ok(output.resize(2, 64));
+    std::array<AudioBlock<const float>, 1> ins{input.block()};
+    std::array<AudioBlock<float>, 1> outs{output.block()};
+    PluginTransport playing;
+    playing.playing = true;
+    const auto blocks = [&](PluginInstance& plugin, unsigned count, const PluginTransport* time) {
+        ok(plugin.activate(options));
+        ok(plugin.start());
+        for (unsigned i = 0; i < count; ++i)
+            ok(plugin.process(PluginProcess<float>{ins, outs, 64, nullptr, nullptr, time}));
+        ok(plugin.stop());
+        ok(plugin.deactivate());
+    };
+    std::vector<std::uint8_t> saved, after;
+    {
+        PluginInstance first;
+        ok(provider->create(path, "jsfx", {}, first));
+        blocks(first, 2, &playing);
+        ok(first.saveState(saved));
+        require(jsfxHistory(saved) == 128);
+        ok(first.close());
+    }
+    PluginInstance second;
+    ok(provider->create(path, "jsfx", {}, second));
+    ok(second.loadState(saved));
+    blocks(second, 1, &playing); // First block after restore, transport starting.
+    ok(second.saveState(after));
+    require(jsfxHistory(after) == 192);
+    blocks(second, 1, nullptr); // Reactivation keeps the evolved state, not the loaded blob.
+    ok(second.saveState(after));
+    require(jsfxHistory(after) == 256);
+    ok(second.loadState(saved)); // An explicit load still replaces it.
+    blocks(second, 1, &playing);
+    ok(second.saveState(after));
+    require(jsfxHistory(after) == 192);
+    ok(second.close());
+}
 #if !defined(__ANDROID__)
 void isolated(const std::filesystem::path& directory, PluginFormat format) {
     auto path = directory / (format == PluginFormat::lv2 ? "cydsp_fixture.lv2" : "gain.jsfx");
@@ -161,6 +283,28 @@ void isolated(const std::filesystem::path& directory, PluginFormat format) {
     ok(w.process(call, block));
     require(block.received && std::abs(output.block().channel(0)[0] -
                                        (format == PluginFormat::lv2 ? 1.125f : 1.25f)) < 1e-6f);
+    if (format == PluginFormat::lv2) {
+        // The fixture reports another latency once its gain is 1.5. No control call
+        // is involved: the worker publishes the change and poll() picks it up.
+        require(w.info()->pluginTiming.latencyKnown && w.info()->pluginTiming.latencyFrames == 11);
+        PluginEventBuffer events;
+        ok(events.prepare(4, 0));
+        PluginEvent gain;
+        gain.kind = PluginEventKind::parameterValue;
+        gain.id = 4;
+        gain.value = 1.5;
+        ok(events.add(gain));
+        std::this_thread::sleep_for(std::chrono::milliseconds(50)); // Previous block answered.
+        ok(w.process(PluginProcess<float>{ins, outs, 64, &events}, block));
+        require(block.submitted);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+        while (w.info()->pluginTiming.latencyFrames != 13 &&
+               std::chrono::steady_clock::now() < deadline) {
+            ok(w.poll());
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        require(w.info()->pluginTiming.latencyKnown && w.info()->pluginTiming.latencyFrames == 13);
+    }
 #if defined(_WIN32)
     auto parent = CreateWindowExW(0, L"STATIC", L"CyDSP worker editor", WS_OVERLAPPED, 0, 0, 640,
                                   480, nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -237,7 +381,21 @@ void editor(const std::filesystem::path& directory, PluginFormat format) {
         ok(events.prepare());
         ok(p.process(PluginProcess<float>{ins, outs, 64, nullptr, &events}));
         require(events.size() > 0 && events.event(0)->id == 7 && events.event(0)->value == .75);
+        // @gfx leaves slider8 out of range and automates the undeclared slider3. The
+        // out-of-range edit is clamped, the undeclared one is not forwarded, and
+        // neither may wedge the edit queue and silence every later block.
+        std::fill(input.block().channel(0).begin(), input.block().channel(0).end(), 2.f);
+        ok(p.keyEditor({std::uint16_t('b'), PluginEditorKeyCode::none, 0, true}));
+        ok(p.pumpMainThread(flags));
+        ok(p.process(PluginProcess<float>{ins, outs, 64, nullptr, &events}));
+        require(events.size() == 1 && events.event(0)->id == 7 && events.event(0)->value == 1);
+        require(output.block().channel(0)[63] == 2.f);
+        ok(p.process(PluginProcess<float>{ins, outs, 64, nullptr, &events}));
+        require(events.size() == 0 && output.block().channel(0)[63] == 2.f);
         ok(p.stop());
+        double clamped = 0;
+        ok(p.parameterValue(7, clamped));
+        require(clamped == 1);
         ok(p.deactivate());
     }
     ok(p.closeEditor());
@@ -254,6 +412,9 @@ void openPluginRegression(const std::filesystem::path& directory) {
         auto gain = format == cyaudio::PluginFormat::lv2 ? 4u : 0u;
         run<float>(path, format, gain);
         run<double>(path, format, gain);
+        rejectedOutput(path, format);
+        if (format == cyaudio::PluginFormat::jsfx)
+            jsfxSerialize(path);
 #if !defined(__ANDROID__)
         isolated(directory, format);
 #endif

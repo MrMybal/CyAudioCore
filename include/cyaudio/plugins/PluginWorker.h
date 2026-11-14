@@ -18,8 +18,12 @@ struct PluginWorkerBlockResult {
     bool submitted = false, received = false, missedDeadline = false;
 };
 // Separate OS process, bounded shared-memory mailbox, one fixed-size block of
-// pipeline latency. Audio methods never wait/query OS state/allocate. Late blocks
-// are discarded; the output is silenced. Call poll() on control to detect crashes.
+// pipeline latency. Audio methods never wait/query OS state/allocate; a submitted
+// block may issue one non-blocking wake-up signal to a sleeping worker. Late blocks
+// are discarded; the output is silenced. Call poll() on control to detect crashes
+// and to refresh info() latency/tail, which the worker republishes when they change.
+// The worker runs the plugin's process on a dedicated audio thread, so a modal loop
+// on the plugin's UI thread stops neither audio nor the heartbeat.
 // launch/control/close require audio idle. The supplied worker executable calls
 // runPluginWorker() below; production presets never create/run an executable.
 class PluginWorker {
@@ -38,6 +42,10 @@ class PluginWorker {
     Status poll(std::uint32_t& requests) noexcept;
     Status saveState(std::vector<std::uint8_t>&) noexcept;
     Status loadState(std::span<const std::uint8_t>) noexcept;
+    // Stops, deactivates, refreshes, reactivates and restarts the plugin in the worker.
+    // Serves pluginRestart/pluginLatencyChanged requests; channel_mismatch means the
+    // ports changed and the worker must be relaunched. info() timing is refreshed.
+    Status restart() noexcept;
     Status openEditor(const PluginWindow&, PluginEditorSize&) noexcept;
     Status resizeEditor(PluginEditorSize&) noexcept;
     Status scaleEditor(double) noexcept;

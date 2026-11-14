@@ -1,9 +1,11 @@
 #include "cyaudio/core/DspTypes.h"
 #include "cyaudio/synthesis/Instrument.h"
+#include "../io/PlatformAudioCodec.h"
 #include <choc/text/choc_JSON.h>
 #include <algorithm>
 #include <fstream>
 #include <stdexcept>
+#include <system_error>
 namespace cyaudio {
 namespace {
 bool valid(const InstrumentPreset& p) noexcept {
@@ -53,6 +55,16 @@ bool boundedJson(std::string_view text) noexcept {
         }
     }
     return !depth && !string;
+}
+// Lexical confinement of a preset's sample to the host's base directory: relative,
+// without a drive or root, and never climbing above the base. Links are not resolved.
+bool confined(const std::filesystem::path& sample) {
+    if (sample.is_absolute() || sample.has_root_name() || sample.has_root_directory())
+        return false;
+    for (const auto& part : sample.lexically_normal())
+        if (part == "..")
+            return false;
+    return true;
 }
 using Value = choc::value::Value;
 std::int64_t integer(const Value& v, std::string_view key, std::int64_t low, std::int64_t high) {
@@ -184,10 +196,23 @@ Status saveInstrumentPreset(const std::filesystem::path& path, const InstrumentP
     if (status != Status::ok)
         return status;
     try {
-        std::ofstream out(path, std::ios::binary | std::ios::trunc);
-        out.write(text.data(), std::streamsize(text.size()));
-        out.flush();
-        return out ? Status::ok : Status::io_error;
+        // Written beside the destination and then swapped in: a failed save (full disk)
+        // leaves the previous preset intact.
+        const auto temporary = detail::temporarySibling(path);
+        bool written = false;
+        {
+            std::ofstream out(temporary, std::ios::binary | std::ios::trunc);
+            out.write(text.data(), std::streamsize(text.size()));
+            out.close();
+            written = !out.fail();
+        }
+        if (written && detail::replaceFile(temporary, path))
+            return Status::ok;
+        std::error_code ec;
+        std::filesystem::remove(temporary, ec);
+        return Status::io_error;
+    } catch (const std::bad_alloc&) {
+        return Status::allocation_failed;
     } catch (...) {
         return Status::io_error;
     }
@@ -204,8 +229,10 @@ template <Sample T> Instrument<T>& Instrument<T>::operator=(Instrument&&) noexce
 template <Sample T>
 Status Instrument<T>::prepare(const ProcessSpec& spec, const InstrumentPreset& p,
                               const std::filesystem::path& base, CpuBackend backend,
-                              std::size_t maximumFrames) noexcept {
+                              std::size_t maximumFrames, bool confineSamplePath) noexcept {
     if (!valid(p) || !maximumFrames)
+        return Status::invalid_argument;
+    if (confineSamplePath && p.source == InstrumentSource::sample && !confined(p.samplePath))
         return Status::invalid_argument;
     try {
         auto next = std::make_unique<State>();
@@ -226,7 +253,10 @@ Status Instrument<T>::prepare(const ProcessSpec& spec, const InstrumentPreset& p
             const auto info = *reader.info();
             if (p.loopEnd > info.frames)
                 return Status::invalid_argument;
-            if (info.frames > maximumFrames || info.frames == 0)
+            // The frame limit holds as such up to stereo; wider files are bounded by the
+            // same amount of memory (frames x channels), not by frames alone.
+            if (info.frames > maximumFrames || info.frames == 0 ||
+                (info.channels > 2 && info.frames / 2 > maximumFrames / info.channels))
                 return Status::block_too_large;
             AudioBuffer<T> audio;
             r = audio.resize(info.channels, std::size_t(info.frames));
@@ -240,6 +270,14 @@ Status Instrument<T>::prepare(const ProcessSpec& spec, const InstrumentPreset& p
                                 n);
                 if (r != Status::ok)
                     return r;
+            }
+            // Float files can carry NaN/Inf, which would reach the audio output as is.
+            for (std::size_t ch = 0; ch < info.channels; ++ch) {
+                T poison{};
+                for (auto sample : audio.block().channel(ch))
+                    poison += sample * T{}; // Zero for finite samples, NaN otherwise.
+                if (!(poison == T{}))
+                    return Status::invalid_argument;
             }
             r = next->sample.prepare(audio.block(), info.sampleRate, p.rootNote, backend);
             if (r != Status::ok)

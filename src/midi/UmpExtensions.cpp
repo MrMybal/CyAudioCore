@@ -235,25 +235,27 @@ UmpPacket umpChord(unsigned group, unsigned channel, const UmpChord& c) noexcept
             return {};
     const auto tonic = ((unsigned(c.tonicAccidental) & 15) << 4) | c.tonic,
                bass = ((unsigned(c.bassAccidental) & 15) << 4) | c.bass;
+    // Set Chord Name: tonic, type and alterations 1-2 in the first data word, alterations
+    // 3-4 in the top half of the second (low half reserved), the whole bass chord in the third.
     return umpFlexData(
         {group, channel, 0, 6, 0},
         {(tonic << 24) | (c.type << 16) | (unsigned(c.alterations[0]) << 8) | c.alterations[1],
-         (unsigned(c.alterations[2]) << 24) | (unsigned(c.alterations[3]) << 16) | (bass << 8) |
-             c.bassType,
-         (unsigned(c.bassAlterations[0]) << 24) | (unsigned(c.bassAlterations[1]) << 16)});
+         (unsigned(c.alterations[2]) << 24) | (unsigned(c.alterations[3]) << 16),
+         (bass << 24) | (c.bassType << 16) | (unsigned(c.bassAlterations[0]) << 8) |
+             c.bassAlterations[1]});
 }
 Status parseUmpChord(const UmpPacket& p, UmpChord& out) noexcept {
-    if (!flexIs(p, 6) || (p.words[3] & 65535))
+    if (!flexIs(p, 6) || (p.words[2] & 65535))
         return Status::invalid_argument;
     UmpChord c;
     c.tonicAccidental = signedNibble(byte(p, 4) >> 4);
     c.tonic = byte(p, 4) & 15;
     c.type = byte(p, 5);
     c.alterations = {byte(p, 6), byte(p, 7), byte(p, 8), byte(p, 9)};
-    c.bassAccidental = signedNibble(byte(p, 10) >> 4);
-    c.bass = byte(p, 10) & 15;
-    c.bassType = byte(p, 11);
-    c.bassAlterations = {byte(p, 12), byte(p, 13)};
+    c.bassAccidental = signedNibble(byte(p, 12) >> 4);
+    c.bass = byte(p, 12) & 15;
+    c.bassType = byte(p, 13);
+    c.bassAlterations = {byte(p, 14), byte(p, 15)};
     if (!umpChord(p.group(), ((p.words[0] >> 20) & 3) == 1 ? 0 : p.channel(), c).valid())
         return Status::invalid_argument;
     out = c;

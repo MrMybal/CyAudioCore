@@ -2,6 +2,7 @@
 #include "cyaudio/core/DspTypes.h"
 // Original CyDSP PCM containers. Apple AIFF-C 1.0 and CAF 1.0 layouts.
 // CAF flags are CAF-specific (little endian bit1), not AudioFormat ASBD flags.
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <choc/audio/choc_AudioFileFormat.h>
@@ -103,24 +104,22 @@ inline bool metadata(choc::value::ValueView array, Container f, std::vector<Meta
     }
     return true;
 }
-inline std::uint64_t sampleRead(std::istream& s, unsigned n, bool little) {
-    if (!little)
-        return read(s, n);
-    std::uint64_t v = 0;
-    for (unsigned i = 0; i < n; ++i) {
-        char c = 0;
-        s.get(c);
-        v |= std::uint64_t(static_cast<unsigned char>(c)) << (8 * i);
-    }
-    return v;
-}
-inline void sampleWrite(std::ostream& s, std::uint64_t v, unsigned n, bool little) {
-    if (!little) {
-        write(s, v, n);
-        return;
-    }
-    for (unsigned i = 0; i < n; ++i)
-        s.put(char(v >> (8 * i)));
+// Frames move through one retained block: one stream call per block, never per byte.
+constexpr std::size_t blockBytes = 65536;
+// Round half away from zero, clamped to [-2^(bits-1), 2^(bits-1) - 1].
+inline std::int64_t quantise(double v, double scale) noexcept {
+    const auto x = v * scale;
+    if (x >= scale - 1)
+        return std::int64_t(scale - 1);
+    if (x <= -scale)
+        return std::int64_t(-scale);
+    auto i = std::int64_t(x);
+    const auto fraction = x - double(i);
+    if (fraction >= 0.5)
+        ++i;
+    else if (fraction <= -0.5)
+        --i;
+    return i;
 }
 struct Reader : choc::audio::AudioFileReader {
     std::shared_ptr<std::istream> stream;
@@ -129,18 +128,22 @@ struct Reader : choc::audio::AudioFileReader {
     std::uint64_t start = 0;
     unsigned bits = 0;
     bool little = false, floating = false;
+    std::vector<char> raw;
     const choc::audio::AudioFileProperties& getProperties() override {
         return properties;
     }
     bool initialise() {
         auto& s = *stream;
         s.clear();
+        const auto first = s.tellg();
         s.seekg(0, std::ios::end);
         const auto end = s.tellg();
-        s.seekg(0);
-        if (end < 12)
+        if (first < 0 || end < first || end - first < 12)
             return false;
-        const auto length = std::uint64_t(end);
+        s.seekg(first);
+        // Offsets are relative to the position the stream was handed over at.
+        const auto origin = std::uint64_t(std::streamoff(first)),
+                   length = std::uint64_t(std::streamoff(end - first));
         std::uint64_t limit = length, at = 0;
         if (container == Container::caf) {
             if (read(s, 4) != 0x63616666 || read(s, 2) != 1 || read(s, 2) != 0)
@@ -150,28 +153,38 @@ struct Reader : choc::audio::AudioFileReader {
             if (read(s, 4) != 0x464f524d)
                 return false;
             const auto size = read(s, 4);
-            if (size < 4 || size > length - 8 ||
+            if (size < 4 ||
                 read(s, 4) != (container == Container::aiff ? 0x41494646u : 0x41494643u))
                 return false;
-            limit = size + 8;
+            // A declared size beyond the stream (truncated file) is clamped, never trusted.
+            limit = std::min(size + 8, length);
             at = 12;
         }
         bool desc = false, data = false, version = container != Container::aifc;
         std::uint64_t bytes = 0;
         std::size_t totalMeta = 0;
         std::vector<Metadata> chunks;
+        const auto isData = [&](std::uint32_t t) {
+            return t == (container == Container::caf ? 0x64617461u : 0x53534e44u);
+        };
         while (at < limit) {
             const unsigned header = container == Container::caf ? 12 : 8;
             if (limit - at < header)
-                return false;
-            s.seekg(std::streamoff(at));
+                break; // Trailing bytes that cannot hold a chunk header.
+            s.seekg(std::streamoff(origin + at));
             const auto type = std::uint32_t(read(s, 4));
             auto n = read(s, header - 4);
             at += header;
             if (container == Container::caf && n == UINT64_MAX && type == 0x64617461)
                 n = limit - at;
-            if (n > limit - at)
-                return false;
+            if (n > limit - at) {
+                // Only the sample chunk of a truncated file is kept, shortened to the stream.
+                if (structural(container, type) && !isData(type))
+                    return false;
+                if (!isData(type))
+                    break;
+                n = limit - at;
+            }
             if (container == Container::caf && type == 0x64657363) {
                 if (desc || at != 20 || n != 32)
                     return false;
@@ -228,23 +241,24 @@ struct Reader : choc::audio::AudioFileReader {
                 }
                 if (offset > n - prefix)
                     return false;
-                start = at + prefix + offset;
+                start = origin + at + prefix + offset;
                 bytes = n - prefix - offset;
             } else if (!structural(container, type)) {
-                if (n > 16777216 || chunks.size() >= 4096 || totalMeta > 16777216 - n)
-                    return false;
-                Metadata m;
-                m.type = type;
-                m.bytes.resize(std::size_t(n));
-                s.read(m.bytes.data(), std::streamsize(n));
-                totalMeta += std::size_t(n);
-                chunks.push_back(std::move(m));
+                // An oversized optional chunk (large artwork tag...) is skipped, not fatal.
+                if (n <= 16777216 && chunks.size() < 4096 && totalMeta <= 16777216 - n) {
+                    Metadata m;
+                    m.type = type;
+                    m.bytes.resize(std::size_t(n));
+                    s.read(m.bytes.data(), std::streamsize(n));
+                    totalMeta += std::size_t(n);
+                    chunks.push_back(std::move(m));
+                }
             } else
                 return false;
-            const auto pad = container == Container::caf ? 0 : (n & 1);
-            if (n + pad > limit - at || !s)
+            if (!s)
                 return false;
-            at += n + pad;
+            const auto pad = container == Container::caf ? 0 : (n & 1);
+            at += std::min(n + pad, limit - at); // A missing final pad byte is accepted.
         }
         if (!desc || !version || !data || !properties.numChannels || properties.numChannels > 256 ||
             !std::isfinite(properties.sampleRate) || properties.sampleRate <= 0 ||
@@ -253,12 +267,12 @@ struct Reader : choc::audio::AudioFileReader {
                       : (bits != 8 && bits != 16 && bits != 24 && bits != 32)))
             return false;
         const auto frameBytes = properties.numChannels * (bits / 8);
-        if (container == Container::caf) {
-            if (bytes % frameBytes)
-                return false;
+        // Whole frames only: a partial last frame or a truncated payload shortens the file.
+        if (container == Container::caf)
             properties.numFrames = bytes / frameBytes;
-        } else if (properties.numFrames > bytes / frameBytes)
-            return false;
+        else
+            properties.numFrames = std::min<std::uint64_t>(properties.numFrames, bytes / frameBytes);
+        raw.resize(std::max<std::size_t>(frameBytes, blockBytes / frameBytes * frameBytes));
         using D = choc::audio::BitDepth;
         properties.bitDepth = floating ? (bits == 32 ? D::float32 : D::float64)
                                        : choc::audio::getIntegerBitDepth(std::uint16_t(bits));
@@ -277,26 +291,37 @@ struct Reader : choc::audio::AudioFileReader {
                 : 0;
         auto& s = *stream;
         s.clear();
+        const unsigned width = bits / 8;
+        const std::size_t frameBytes = std::size_t(properties.numChannels) * width;
         if (n)
-            s.seekg(std::streamoff(start + first * properties.numChannels * (bits / 8)));
-        for (std::uint64_t i = 0; i < n; ++i)
+            s.seekg(std::streamoff(start + first * frameBytes));
+        const auto scale = std::ldexp(1.0, 1 - int(bits)); // Exactly value / 2^(bits-1).
+        const unsigned shift = 64 - bits;
+        for (std::uint64_t done = 0; done < n;) {
+            const auto count =
+                std::size_t(std::min<std::uint64_t>(n - done, raw.size() / frameBytes));
+            s.read(raw.data(), std::streamsize(count * frameBytes));
+            if (!s)
+                return false;
             for (std::uint32_t ch = 0; ch < properties.numChannels; ++ch) {
-                const auto raw = sampleRead(s, bits / 8, little);
-                double v = 0;
-                if (floating)
-                    v = bits == 32 ? double(std::bit_cast<float>(std::uint32_t(raw)))
-                                   : std::bit_cast<double>(raw);
-                else {
-                    const auto signedValue =
-                        (raw & (std::uint64_t(1) << (bits - 1)))
-                            ? std::int64_t(raw) - std::int64_t(std::uint64_t(1) << bits)
-                            : std::int64_t(raw);
-                    v = double(signedValue) / std::ldexp(1.0, int(bits - 1));
+                auto* p = reinterpret_cast<const unsigned char*>(raw.data()) + ch * width;
+                for (std::size_t i = 0; i < count; ++i, p += frameBytes) {
+                    std::uint64_t v = 0;
+                    if (little)
+                        for (unsigned b = width; b--;)
+                            v = (v << 8) | p[b];
+                    else
+                        for (unsigned b = 0; b < width; ++b)
+                            v = (v << 8) | p[b];
+                    const double value =
+                        !floating    ? double(std::int64_t(v << shift) >> shift) * scale
+                        : bits == 32 ? double(std::bit_cast<float>(std::uint32_t(v)))
+                                     : std::bit_cast<double>(v);
+                    out.getSample(ch, std::uint32_t(done + i)) = static_cast<T>(value);
                 }
-                out.getSample(ch, std::uint32_t(i)) = static_cast<T>(v);
             }
-        if (!s)
-            return false;
+            done += count;
+        }
         for (auto i = std::uint32_t(n); i < out.getNumFrames(); ++i)
             for (std::uint32_t ch = 0; ch < properties.numChannels; ++ch)
                 out.getSample(ch, i) = 0;
@@ -316,7 +341,9 @@ struct Writer : choc::audio::AudioFileWriter {
     Container container = Container::aiff;
     unsigned bits = 16;
     bool floating = false, little = false;
-    std::uint64_t start = 0, dataSizeOffset = 0;
+    // Absolute stream positions; origin is where the stream was handed over.
+    std::uint64_t origin = 0, start = 0, dataSizeOffset = 0;
+    std::vector<char> raw;
     const choc::audio::AudioFileProperties& getProperties() override {
         return properties;
     }
@@ -331,6 +358,12 @@ struct Writer : choc::audio::AudioFileWriter {
     }
     bool initialise() {
         auto& s = *stream;
+        const auto first = s.tellp();
+        if (first < 0)
+            return false;
+        origin = std::uint64_t(std::streamoff(first));
+        const std::size_t frameBytes = std::size_t(properties.numChannels) * (bits / 8);
+        raw.resize(std::max<std::size_t>(frameBytes, blockBytes / frameBytes * frameBytes));
         if (container == Container::caf) {
             write(s, 0x63616666, 4);
             write(s, 1, 2);
@@ -390,9 +423,9 @@ struct Writer : choc::audio::AudioFileWriter {
         s.seekp(std::streamoff(dataSizeOffset));
         write(s, n + (container == Container::caf ? 4 : 8), container == Container::caf ? 8 : 4);
         if (container != Container::caf) {
-            s.seekp(4);
-            write(s, start + n + (n & 1) - 8, 4);
-            s.seekp(container == Container::aifc ? 34 : 22);
+            s.seekp(std::streamoff(origin + 4));
+            write(s, start - origin + n + (n & 1) - 8, 4);
+            s.seekp(std::streamoff(origin + (container == Container::aifc ? 34 : 22)));
             write(s, properties.numFrames, 4);
             s.seekp(std::streamoff(start + n));
             if (n & 1)
@@ -405,35 +438,49 @@ struct Writer : choc::audio::AudioFileWriter {
         if (in.getNumChannels() != properties.numChannels)
             return false;
         const auto count = std::uint64_t(in.getNumFrames());
-        const auto frameBytes = properties.numChannels * (bits / 8);
+        const unsigned width = bits / 8;
+        const std::size_t frameBytes = std::size_t(properties.numChannels) * width;
         const auto limit =
             container == Container::caf ? std::uint64_t(INT64_MAX) : std::uint64_t(0xffffffff);
-        if (start > limit || bytes() >= limit - start ||
+        const auto header = start - origin; // Container sizes are relative to the stream origin.
+        if (header > limit || bytes() >= limit - header ||
             count >
-                (limit - start - bytes() - ((container == Container::caf) ? 0 : 1)) / frameBytes ||
+                (limit - header - bytes() - ((container == Container::caf) ? 0 : 1)) / frameBytes ||
             (container != Container::caf && count > 0xffffffff - properties.numFrames))
             return false;
+        // Nothing is written for a block that contains a non-finite sample.
+        for (std::uint32_t ch = 0; ch < properties.numChannels; ++ch)
+            for (std::uint32_t i = 0; i < in.getNumFrames(); ++i)
+                if (!std::isfinite(double(in.getSample(ch, i))))
+                    return false;
         auto& s = *stream;
         s.seekp(std::streamoff(start + bytes()));
-        for (std::uint32_t i = 0; i < in.getNumFrames(); ++i)
+        const auto scale = std::ldexp(1.0, int(bits - 1));
+        for (std::uint64_t done = 0; done < count;) {
+            const auto block =
+                std::size_t(std::min<std::uint64_t>(count - done, raw.size() / frameBytes));
             for (std::uint32_t ch = 0; ch < properties.numChannels; ++ch) {
-                const double v = in.getSample(ch, i);
-                if (!std::isfinite(v))
-                    return false;
-                std::uint64_t raw;
-                if (floating)
-                    raw = bits == 32 ? std::uint64_t(std::bit_cast<std::uint32_t>(float(v)))
+                auto* p = reinterpret_cast<unsigned char*>(raw.data()) + ch * width;
+                for (std::size_t i = 0; i < block; ++i, p += frameBytes) {
+                    const double v = in.getSample(ch, std::uint32_t(done + i));
+                    const auto value =
+                        !floating    ? std::uint64_t(quantise(v, scale))
+                        : bits == 32 ? std::uint64_t(std::bit_cast<std::uint32_t>(float(v)))
                                      : std::bit_cast<std::uint64_t>(v);
-                else {
-                    const auto scale = std::ldexp(1.0, int(bits - 1));
-                    raw = std::uint64_t(std::int64_t(std::clamp(
-                        std::round(std::clamp(v, -1.0, 1.0) * scale), -scale, scale - 1)));
+                    if (little)
+                        for (unsigned b = 0; b < width; ++b)
+                            p[b] = static_cast<unsigned char>(value >> (8 * b));
+                    else
+                        for (unsigned b = 0; b < width; ++b)
+                            p[b] = static_cast<unsigned char>(value >> (8 * (width - 1 - b)));
                 }
-                sampleWrite(s, raw, bits / 8, little);
             }
-        if (!s)
-            return false;
-        properties.numFrames += count;
+            s.write(raw.data(), std::streamsize(block * frameBytes));
+            if (!s)
+                return false;
+            properties.numFrames += block; // Only frames that reached the stream are declared.
+            done += block;
+        }
         return true;
     }
     bool appendFrames(choc::buffer::ChannelArrayView<const float> b) override {
@@ -487,9 +534,11 @@ class AiffCodec : public choc::audio::AudioFileFormat {
     createWriter(std::shared_ptr<std::ostream> s, choc::audio::AudioFileProperties p) override {
         const auto bits = choc::audio::getBytesPerSample(p.bitDepth) * 8;
         const auto floating = choc::audio::isFloat(p.bitDepth);
+        // Plain AIFF is big-endian integer PCM only; the byte order is a quality of AIFC/CAF.
         if (!s || !*s || !p.numChannels || p.numChannels > 256 || !std::isfinite(p.sampleRate) ||
             p.sampleRate <= 0 || p.sampleRate > 1e9 || !bits ||
-            (container_ == aiff::Container::aiff && floating) ||
+            (!p.quality.empty() && p.quality != "big-endian" && p.quality != "little-endian") ||
+            (container_ == aiff::Container::aiff && (floating || !p.quality.empty())) ||
             (container_ == aiff::Container::aifc && floating && p.quality == "little-endian"))
             return {};
         auto w = std::make_unique<aiff::Writer>();

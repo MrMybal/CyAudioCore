@@ -66,6 +66,37 @@ void clocks() {
     collector.reset();
     midi.reset();
     ump.reset();
+    // An event larger than the whole output buffer is dropped and counted; it must not
+    // stay at the head of the queue and stall every later event.
+    MidiBuffer tiny;
+    ok(tiny.prepare(4, 4));
+    const std::array<std::uint8_t, 6> sysex{0xf0, 1, 2, 3, 4, 0xf7};
+    require(tiny.add(0, sysex) == Status::block_too_large && tiny.size() == 0,
+            "MIDI buffer distinguishes impossible from saturated");
+    ok(collector.pushMidi(1000000000, sysex));
+    ok(collector.pushMidi(1000000001, on.bytes()));
+    require(collector.collect({1000000000, 0, 1000}, 1, tiny, ump) == Status::block_too_large &&
+                tiny.size() == 1 && tiny.event(0).bytes[0] == 0x90 &&
+                collector.oversizedMessages() == 1,
+            "oversized event dropped, later event delivered");
+    tiny.reset();
+    ok(collector.collect({1000000000, 0, 1000}, 1, tiny, ump));
+    require(tiny.size() == 0 && collector.oversizedMessages() == 1, "no stall after oversized");
+    // syncEpoch fixes the snapshot of the next collect and reports invalidations.
+    const auto epoch = collector.syncEpoch();
+    ok(collector.pushMidi(1000000000, on.bytes()));
+    ok(collector.collect({1000000000, 0, 1000}, 1, midi, ump));
+    require(midi.size() == 0, "arrival after the snapshot waits for the next collect");
+    collector.invalidate();
+    require(collector.syncEpoch() == epoch + 1, "snapshot reports the invalidation");
+    ok(collector.pushMidi(1000000000, off.bytes()));
+    ok(collector.collect({1000000000, 0, 1000}, 1, midi, ump));
+    require(midi.size() == 0, "old epoch dropped by the snapshot");
+    ok(collector.collect({1000000000, 0, 1000}, 1, midi, ump));
+    require(midi.size() == 1 && midi.event(0).bytes[0] == 0x80, "new epoch event follows");
+    collector.reset();
+    midi.reset();
+    ump.reset();
     struct Audit {
         MidiEventCollector* c;
         MidiBuffer* m;
@@ -111,8 +142,31 @@ void extensions() {
     auto ch = umpChord(0, 1, chord);
     UmpChord decoded;
     ok(parseUmpChord(ch, decoded));
-    require(ch.words[1] == 0x03010000 && ch.words[2] == 0x00008000 && decoded.tonic == 3,
+    require(ch.words[1] == 0x03010000 && ch.words[2] == 0 && ch.words[3] == 0x80000000 &&
+                decoded.tonic == 3 && decoded.bass == 0 && decoded.bassAccidental == -8,
             "chord literal");
+    // Fixed wire vector, field by field from the UMP Flex Data Set Chord Name layout:
+    // C sharp major with four alterations over E flat, bass chord type 2 with two alterations.
+    const UmpPacket wire{{{0xd2040006, 0x1301192b, 0x35410000, 0xf5021327}}, 4};
+    UmpChord full;
+    full.tonicAccidental = 1;
+    full.tonic = 3;
+    full.type = 1;
+    full.alterations = {0x19, 0x2b, 0x35, 0x41};
+    full.bassAccidental = -1;
+    full.bass = 5;
+    full.bassType = 2;
+    full.bassAlterations = {0x13, 0x27};
+    require(umpChord(2, 5, full).words == wire.words, "chord wire packing");
+    ok(parseUmpChord(wire, decoded));
+    require(decoded.tonicAccidental == 1 && decoded.tonic == 3 && decoded.type == 1 &&
+                decoded.alterations == full.alterations && decoded.bassAccidental == -1 &&
+                decoded.bass == 5 && decoded.bassType == 2 &&
+                decoded.bassAlterations == full.bassAlterations,
+            "chord wire parse");
+    auto reserved = wire;
+    reserved.words[2] |= 0x0100;
+    require(parseUmpChord(reserved, decoded) == Status::invalid_argument, "chord reserved half");
     CiIdentity identity;
     identity.manufacturer = {0, 0x20, 0x33};
     identity.family = 0x1234;
@@ -210,8 +264,13 @@ void controllers() {
     std::uint32_t v = 0;
     ok(c.parameter(false, 1, 2, 1, 2, v));
     require(v == 90, "relative NRPN signed");
-    require(c.process(umpParameter(false, 1, 2, 1, 3, 100)) == Status::update_queue_full,
-            "bounded parameter storage");
+    // Full table: the parameter written longest ago makes room; channel state is kept.
+    ok(c.process(umpParameter(false, 1, 2, 1, 3, 100)));
+    require(c.parameter(true, 1, 2, 0, 0, v) == Status::would_block &&
+                c.parameter(false, 1, 2, 1, 3, v) == Status::ok && v == 100 &&
+                c.parameter(false, 1, 2, 1, 2, v) == Status::ok && v == 90 &&
+                c.channel(1, 2)->pitchRange == 12,
+            "bounded parameter storage evicts the oldest write");
     ok(c.process(umpController(1, 2, 7, 123)));
     ok(c.process(umpController(1, 2, 0, 456)));
     require(c.channel(1, 2)->cc[7] == 123 && c.channel(1, 2)->cc[0] == 0, "atomic CC restrictions");
@@ -356,6 +415,139 @@ void midiReconnect() {
     connection.close();
     ok(connection.poll(1000));
     require(!connection.connected(), "explicit MIDI close");
+    // A driver that reports an empty input as end_of_stream (as MidiInput does) is idle,
+    // not disconnected.
+    struct Idle {
+        unsigned closes = 0, disconnects = 0;
+    } idle;
+    MidiConnectionDriver d;
+    d.context = &idle;
+    d.enumerate = [](void*, std::vector<MidiConnectionPort>& v) noexcept {
+        try {
+            v.assign(1, {"stable", "Device", true, true});
+            return Status::ok;
+        } catch (...) {
+            return Status::allocation_failed;
+        }
+    };
+    d.open = [](void*, const MidiConnectionSelection&) noexcept { return Status::ok; };
+    d.close = [](void* p) noexcept { ++static_cast<Idle*>(p)->closes; };
+    d.health = [](void*) noexcept { return Status::ok; };
+    d.read = [](void*, MidiConnectionMessage&) noexcept { return Status::end_of_stream; };
+    d.send = [](void*, const MidiConnectionMessage&) noexcept { return Status::ok; };
+    MidiConnectionCallbacks changed;
+    changed.context = &idle;
+    changed.changed = [](void* p, MidiConnectionEvent e, Status) noexcept {
+        if (e == MidiConnectionEvent::disconnected)
+            ++static_cast<Idle*>(p)->disconnects;
+    };
+    MidiConnection quiet;
+    ok(quiet.prepare(d, o, changed));
+    ok(quiet.open({"stable", ""}, 0));
+    const auto generation = quiet.generation();
+    const auto closes = idle.closes;
+    for (std::uint64_t now = 1; now < 40; ++now)
+        ok(quiet.poll(now));
+    require(quiet.connected() && quiet.generation() == generation && idle.closes == closes &&
+                !idle.disconnects,
+            "empty input poll keeps the connection");
+    quiet.close();
+}
+void midiConnectionQueues() {
+    struct Script {
+        std::array<MidiConnectionMessage, 2> input{};
+        std::size_t next = 0;
+        struct Sent {
+            bool ump = false;
+            std::size_t size = 0;
+            std::uint8_t first = 0, last = 0;
+            std::uint32_t word = 0;
+        };
+        std::array<Sent, 32> sent{};
+        std::size_t count = 0;
+    } script;
+    script.input[0].bytes[0] = 0x90; // Data byte out of range: rejected by the collector.
+    script.input[0].bytes[1] = 200;
+    script.input[0].bytes[2] = 1;
+    script.input[0].size = 3;
+    script.input[1].ump = true;
+    script.input[1].packet = umpNote(true, 0, 1, 61, 65535);
+    script.input[1].timestampNs = 1000000000;
+    MidiConnectionDriver d;
+    d.context = &script;
+    d.enumerate = [](void*, std::vector<MidiConnectionPort>& v) noexcept {
+        try {
+            v.assign(1, {"stable", "Device", true, true});
+            return Status::ok;
+        } catch (...) {
+            return Status::allocation_failed;
+        }
+    };
+    d.open = [](void*, const MidiConnectionSelection&) noexcept { return Status::ok; };
+    d.close = [](void*) noexcept {};
+    d.health = [](void*) noexcept { return Status::ok; };
+    d.read = [](void* p, MidiConnectionMessage& v) noexcept {
+        auto& s = *static_cast<Script*>(p);
+        if (s.next == s.input.size())
+            return Status::would_block;
+        v = s.input[s.next++];
+        return Status::ok;
+    };
+    d.send = [](void* p, const MidiConnectionMessage& m) noexcept {
+        auto& s = *static_cast<Script*>(p);
+        if (s.count < s.sent.size())
+            s.sent[s.count++] = {m.ump, m.size, m.bytes[0],
+                                 m.size ? m.bytes[m.size - 1] : m.bytes[0], m.packet.words[0]};
+        return Status::ok;
+    };
+    MidiReconnectOptions o;
+    o.queuedMessages = 8;
+    MidiConnection connection;
+    ok(connection.prepare(d, o));
+    script.next = script.input.size(); // Nothing to read while connecting.
+    ok(connection.open({"stable", "stable"}, 0));
+    MidiConnectionMessage a, sysex, note, b;
+    a.ump = b.ump = true;
+    a.packet = umpController(0, 1, 7, 1);
+    b.packet = umpController(0, 1, 7, 2);
+    sysex.bytes[0] = 0xf0;
+    sysex.size = 4096;
+    sysex.bytes[4095] = 0xf7;
+    const auto on = midiNoteOn(1, 60, 100);
+    std::copy(on.bytes().begin(), on.bytes().end(), note.bytes.begin());
+    note.size = 3;
+    ok(connection.send(a));
+    ok(connection.send(sysex));
+    ok(connection.send(note));
+    sysex.size = 100;
+    sysex.bytes[99] = 0xf7;
+    ok(connection.send(sysex));
+    ok(connection.send(b));
+    script.next = 0;
+    require(connection.poll(1) == Status::invalid_argument && connection.connected(),
+            "bad inbound message reported without disconnecting");
+    MidiBuffer m;
+    UmpBuffer u;
+    ok(m.prepare(8, 128));
+    ok(u.prepare(8));
+    ok(connection.collect({1000000000, 0, 48000}, 128, m, u));
+    require(u.events().size() == 1 &&
+                u.events()[0].packet.words[0] == script.input[1].packet.words[0],
+            "message after a bad one still collected");
+    const auto& s = script.sent;
+    require(script.count == 5 && s[0].ump && s[0].word == a.packet.words[0] && !s[1].ump &&
+                s[1].size == 4096 && s[1].first == 0xf0 && s[1].last == 0xf7 && !s[2].ump &&
+                s[2].size == 3 && s[2].first == 0x90 && s[3].size == 100 && s[3].last == 0xf7 &&
+                s[4].ump && s[4].word == b.packet.words[0],
+            "output serviced after a bad inbound message, in send order across record sizes");
+    for (unsigned i = 0; i < 8; ++i)
+        ok(connection.send(sysex));
+    require(connection.send(sysex) == Status::update_queue_full && connection.send(a) == Status::ok,
+            "bounded SysEx queue leaves short messages unaffected");
+    ok(connection.poll(2)); // One turn sends at most queuedMessages records.
+    ok(connection.poll(3));
+    require(script.count == 14 && script.sent[13].ump, "queued output drained in order");
+    connection.close();
 }
 void devices() {
     struct Fake {
@@ -455,6 +647,7 @@ void dawMidiRegression() {
 #if defined(CYAUDIOCORE_TEST_IO)
     devices();
     midiReconnect();
+    midiConnectionQueues();
 #endif
     std::cout << "PASS DAW MIDI clock/reconnect/Flex/Stream/controllers/profiles/realtime\n";
 }

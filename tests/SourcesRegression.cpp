@@ -205,6 +205,26 @@ template <Sample T> void sources() {
             "read-ahead converted EOS count");
     for (std::size_t i = 13; i < 256; ++i)
         require(out.block().channel(0)[i] == 0, "read-ahead EOS padding");
+    // The destination is output-only: stale content must not survive an empty or short read.
+    const auto stale = [&] {
+        for (std::size_t ch = 0; ch < out.block().channels(); ++ch)
+            std::fill(out.block().channel(ch).begin(), out.block().channel(ch).end(), T{9});
+    };
+    const auto cleared = [&](std::size_t from) {
+        for (std::size_t ch = 0; ch < out.block().channels(); ++ch)
+            for (std::size_t i = from; i < out.block().frames(); ++i)
+                if (out.block().channel(ch)[i] != 0)
+                    return false;
+        return true;
+    };
+    stale();
+    require(source.readAt(source.info().frames, out.block(), read) == Status::end_of_stream &&
+                read == 0 && cleared(0),
+            "read-ahead past-end clears destination");
+    stale();
+    const auto seek = source.readAt(0, out.block(), read);
+    require((seek == Status::ok || seek == Status::would_block) && cleared(read),
+            "read-ahead unprefetched seek clears unread tail");
     source.close();
     ReadAheadOptions options;
     options.outputChannels = 1;

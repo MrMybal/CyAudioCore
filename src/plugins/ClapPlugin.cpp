@@ -149,6 +149,7 @@ class ClapBackend final : public PluginBackend {
     std::array<Fd, 64> fdSlots_{};
     clap_id nextTimer_ = 1;
     bool active_ = false, editor_ = false, floating_ = false, cocoa_ = false;
+    DroppedEvents dropped_;
     static ClapBackend& self(const clap_host_t* h) noexcept {
         return *static_cast<ClapBackend*>(h->host_data);
     }
@@ -297,8 +298,12 @@ class ClapBackend final : public PluginBackend {
                }};
         out_ = {this, [](const clap_output_events_t* l, const clap_event_header_t* e) noexcept {
                     auto& s = *static_cast<ClapBackend*>(l->ctx);
-                    return s.outputEvents_ &&
-                           decodeClapEvent(e, *s.outputEvents_, s.frames_) == Status::ok;
+                    if (!s.outputEvents_)
+                        return false;
+                    if (decodeClapEvent(e, *s.outputEvents_, s.frames_) == Status::ok)
+                        return true;
+                    s.dropped_.add(); // Rejected to the plugin and reported to the host.
+                    return false;
                 }};
     }
     ~ClapBackend() override {
@@ -654,7 +659,7 @@ class ClapBackend final : public PluginBackend {
         }
     }
     std::uint32_t pumpMainThread() noexcept override {
-        auto flags = requests_.exchange(0, std::memory_order_acq_rel);
+        auto flags = requests_.exchange(0, std::memory_order_acq_rel) | dropped_.take();
         if (flags & pluginMainThread)
             plugin_->on_main_thread(plugin_);
         if (flags & pluginEditorClosed)

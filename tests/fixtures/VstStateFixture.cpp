@@ -309,6 +309,7 @@ class Fixture final : public IComponent,
     }
     tresult PLUGIN_API getState(IBStream* stream) override {
         int32 count = 0;
+        if (!controller_ && mode_ == 6) return kNotImplemented; // Component without state.
         if (controller_) {
             if (mode_ == 0) return kNotImplemented;
             if (mode_ == 2) return kInternalError;
@@ -349,6 +350,7 @@ class Fixture final : public IComponent,
         return 64;
     }
     tresult PLUGIN_API setComponentState(IBStream* state) override {
+        if (mode_ == 5) return kNotImplemented; // SDK EditController default.
         return setState(state);
     }
     int32 PLUGIN_API getParameterCount() override {
@@ -447,10 +449,10 @@ class Factory final : public IPluginFactory {
         return kResultOk;
     }
     int32 PLUGIN_API countClasses() override {
-        return 5;
+        return 7;
     }
     tresult PLUGIN_API getClassInfo(int32 index, PClassInfo* info) override {
-        if (index < 0 || index >= 5 || !info)
+        if (index < 0 || index >= 7 || !info)
             return kInvalidArgument;
         std::copy_n(fixtureId, 16, info->cid);
         info->cid[15] = char(0x20 + index);
@@ -465,8 +467,8 @@ class Factory final : public IPluginFactory {
         *out = nullptr;
         TUID expected{}; std::copy_n(fixtureId,16,expected); expected[15]=cid[15];
         const unsigned suffix=static_cast<unsigned char>(cid[15]);
-        const bool controller=suffix>=0x60 && suffix<0x65;
-        if (!equal(cid,expected) || (!controller && (suffix<0x20 || suffix>=0x25))) return kResultFalse;
+        const bool controller=suffix>=0x60 && suffix<0x67;
+        if (!equal(cid,expected) || (!controller && (suffix<0x20 || suffix>=0x27))) return kResultFalse;
         auto* fixture = new (std::nothrow) Fixture(controller, suffix-(controller?0x60:0x20));
         if (!fixture)
             return kOutOfMemory;

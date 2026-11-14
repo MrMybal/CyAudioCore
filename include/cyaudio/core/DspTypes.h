@@ -11,6 +11,9 @@
 #include <cydsp/processors/TimeStretch.h>
 #include <cydsp/synthesis/Wavetable.h>
 #include <cydsp/synthesis/SampleData.h>
+// A source checkout bypasses the package version check, so state the requirement here too.
+static_assert(CYDSP_VERSION_MAJOR > 0 || CYDSP_VERSION_MINOR >= 3,
+              "CyAudioCore requires CyDSP 0.3 or later (Adsr::process, SampleData::render)");
 // Identical CyDSP types; no duplicate storage, conversion or numerical kernel.
 namespace cyaudio {
 using cydsp::Sample;

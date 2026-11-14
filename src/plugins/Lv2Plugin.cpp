@@ -4,7 +4,6 @@
 #include "PluginStateBytes.h"
 #include "cydsp/core/AudioBuffer.h"
 #include "cydsp/core/SpscQueue.h"
-#include "cydsp/math/VectorOps.h"
 #include "lilv/lilv.h"
 #include "lv2/atom/forge.h"
 #include "lv2/atom/util.h"
@@ -21,6 +20,7 @@
 #include "lv2/worker/worker.h"
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <thread>
 namespace cyaudio::detail {
 namespace {
@@ -68,12 +68,18 @@ PluginDescriptor descriptor(const LilvPlugin* p) {
     Node name(lilv_plugin_get_name(p)), author(lilv_plugin_get_author_name(p));
     return {PluginFormat::lv2, text(lilv_plugin_get_uri(p)), text(name), text(author), "", "LV2"};
 }
+// 4096 lock-free slots. Names (up to 1023 bytes each) are appended to one arena that
+// is reserved but never pre-touched, so an instance pays only for the URIs it maps
+// instead of a zero-filled kilobyte per slot.
 class Urids {
+    static constexpr std::uint32_t arenaBytes = 512 * 1024;
     struct Entry {
-        std::atomic<std::uint32_t> state{0};
-        char uri[1024]{};
+        std::atomic<std::uint32_t> state{0}; // 0 free, 1 being written, 2 published.
+        std::uint32_t offset = 0;
     };
     std::unique_ptr<Entry[]> entries_ = std::make_unique<Entry[]>(4096);
+    std::unique_ptr<char[]> arena_ = std::make_unique_for_overwrite<char[]>(arenaBytes);
+    std::atomic<std::uint32_t> used_{0};
 
   public:
     LV2_URID_Map map{this, [](void* p, const char* s) { return static_cast<Urids*>(p)->get(s); }};
@@ -96,14 +102,23 @@ class Urids {
             if (state == 1)
                 return 0;
             if (state == 2) {
-                if (std::strcmp(e.uri, s) == 0)
+                if (std::strcmp(arena_.get() + e.offset, s) == 0)
                     return index + 1;
                 continue;
             }
             std::uint32_t empty = 0;
             if (!e.state.compare_exchange_strong(empty, 1, std::memory_order_acq_rel))
                 return 0;
-            std::memcpy(e.uri, s, n + 1);
+            const auto bytes = std::uint32_t(n + 1);
+            auto at = used_.load(std::memory_order_relaxed);
+            do {
+                if (bytes > arenaBytes - at) { // Arena exhausted: release the slot.
+                    e.state.store(0, std::memory_order_release);
+                    return 0;
+                }
+            } while (!used_.compare_exchange_weak(at, at + bytes, std::memory_order_acq_rel));
+            std::memcpy(arena_.get() + at, s, bytes);
+            e.offset = at;
             e.state.store(2, std::memory_order_release);
             return index + 1;
         }
@@ -112,15 +127,80 @@ class Urids {
     const char* name(std::uint32_t id) const noexcept {
         if (!id || id > 4096 || entries_[id - 1].state.load(std::memory_order_acquire) != 2)
             return nullptr;
-        return entries_[id - 1].uri;
+        return arena_.get() + entries_[id - 1].offset;
     }
 };
 struct UiControl {
     PluginEvent event;
 };
-struct Lv2Work {
-    std::uint32_t bytes = 0;
-    std::array<std::uint8_t, 65536> data;
+// Single-producer/single-consumer ring of length-prefixed worker messages: at most
+// 16 pending messages of at most 64 KiB each. The storage is reserved without being
+// touched and a message costs one copy of its own bytes, not of a 64 KiB slot.
+class WorkRing {
+    static constexpr std::uint32_t maximumMessages = 16, maximumBytes = 65536, header = 8,
+                                   capacity = maximumMessages * (maximumBytes + header);
+    std::unique_ptr<std::uint8_t[]> data_, scratch_;
+    std::uint32_t tail_ = 0; // Producer only.
+    std::atomic<std::uint32_t> pushed_{0};
+    std::uint32_t head_ = 0; // Consumer only.
+    std::atomic<std::uint32_t> popped_{0};
+    static std::uint32_t padded(std::uint32_t n) noexcept {
+        return (n + 7u) & ~7u; // Payloads start 8-byte aligned.
+    }
+
+  public:
+    void prepare() {
+        auto data = std::make_unique_for_overwrite<std::uint8_t[]>(capacity);
+        auto scratch = std::make_unique_for_overwrite<std::uint8_t[]>(maximumBytes);
+        data_ = std::move(data);
+        scratch_ = std::move(scratch);
+        tail_ = head_ = 0;
+        pushed_.store(0);
+        popped_.store(0);
+    }
+    bool ready() const noexcept {
+        return data_ != nullptr;
+    }
+    bool push(std::uint32_t n, const void* bytes) noexcept {
+        if (!data_ || n > maximumBytes || (n && !bytes))
+            return false;
+        const auto pushed = pushed_.load(std::memory_order_relaxed);
+        if (pushed - popped_.load(std::memory_order_acquire) >= maximumMessages)
+            return false;
+        std::memcpy(data_.get() + tail_, &n, sizeof(n));
+        const auto at = (tail_ + header) % capacity;
+        const auto first = std::min(n, capacity - at);
+        if (first)
+            std::memcpy(data_.get() + at, bytes, first);
+        if (n > first)
+            std::memcpy(data_.get(), static_cast<const std::uint8_t*>(bytes) + first, n - first);
+        tail_ = (tail_ + header + padded(n)) % capacity;
+        pushed_.store(pushed + 1, std::memory_order_release);
+        return true;
+    }
+    // Oldest message, valid until this consumer calls discard(); null when empty.
+    const std::uint8_t* peek(std::uint32_t& n) noexcept {
+        if (!data_ ||
+            popped_.load(std::memory_order_relaxed) == pushed_.load(std::memory_order_acquire))
+            return nullptr;
+        std::memcpy(&n, data_.get() + head_, sizeof(n));
+        const auto at = (head_ + header) % capacity;
+        if (n <= capacity - at)
+            return data_.get() + at;
+        const auto first = capacity - at; // Wrapped payload: hand out a contiguous copy.
+        std::memcpy(scratch_.get(), data_.get() + at, first);
+        std::memcpy(scratch_.get() + first, data_.get(), n - first);
+        return scratch_.get();
+    }
+    void discard() noexcept {
+        const auto popped = popped_.load(std::memory_order_relaxed);
+        if (!data_ || popped == pushed_.load(std::memory_order_acquire))
+            return;
+        std::uint32_t n = 0;
+        std::memcpy(&n, data_.get() + head_, sizeof(n));
+        head_ = (head_ + header + padded(n)) % capacity;
+        popped_.store(popped + 1, std::memory_order_release);
+    }
 };
 class Lv2Backend final : public PluginBackend {
     World world_;
@@ -145,8 +225,11 @@ class Lv2Backend final : public PluginBackend {
               value(p.value), data(std::move(p.data)) {}
     };
     std::vector<Port> ports_;
-    AudioBuffer<float> input_, output_;
-    VectorOps vectors_;
+    // Port indices by kind and the parameter slot of each control port, built once so
+    // processing never scans or searches the whole port list per event or sub-block.
+    std::vector<std::uint32_t> audioInputs_, audioOutputs_, atomPorts_, controlPorts_;
+    std::vector<std::int32_t> parameterOfPort_;
+    AudioBuffer<float> input_, output_; // Float storage for the double entry point.
     std::uint32_t totalInputs_ = 0, totalOutputs_ = 0;
     PluginOutput events_;
     SpscQueue<UiControl> uiQueue_;
@@ -155,34 +238,32 @@ class Lv2Backend final : public PluginBackend {
     std::int32_t minBlock_ = 1, maxBlock_ = 512, nominalBlock_ = 512, sequenceBytes_ = 65536;
     float sampleRate_ = 48000;
     std::uint32_t midi_ = 0, sequence_ = 0, chunk_ = 0, float_ = 0;
+    // Resolved once: forging a time position per sub-block maps nothing.
+    LV2_Atom_Forge forge_{};
+    std::uint32_t timePosition_ = 0, timeSpeed_ = 0, timeFrame_ = 0, timeBpm_ = 0,
+                  timeBeatUnit_ = 0, timeBeatsPerBar_ = 0, timeBeat_ = 0;
     std::array<LV2_Options_Option, 6> opts_{};
     std::array<LV2_Feature, 5> features_{};
     std::array<const LV2_Feature*, 6> featurePointers_{};
-    SpscQueue<Lv2Work> requests_, responses_;
+    WorkRing requests_, responses_; // Allocated only for plugins with a worker interface.
     const LV2_Worker_Interface* worker_ = nullptr;
     std::thread workerThread_;
     std::atomic<bool> quit_{false};
+    // LV2 forbids work() concurrent with state save/restore. Both run off the audio
+    // thread, so an ordinary mutex serializes them.
+    std::mutex workMutex_;
+    DroppedEvents dropped_;
     LV2_Worker_Schedule schedule_{this, [](void* p, std::uint32_t n, const void* b) {
                                       return static_cast<Lv2Backend*>(p)->schedule(n, b);
                                   }};
     LV2_Worker_Status schedule(std::uint32_t n, const void* b) noexcept {
-        if (n > 65536 || (n && !b) || quit_.load())
+        if (quit_.load())
             return LV2_WORKER_ERR_NO_SPACE;
-        Lv2Work work{};
-        work.bytes = n;
-        if (n)
-            std::memcpy(work.data.data(), b, n);
-        return requests_.push(work) ? LV2_WORKER_SUCCESS : LV2_WORKER_ERR_NO_SPACE;
+        return requests_.push(n, b) ? LV2_WORKER_SUCCESS : LV2_WORKER_ERR_NO_SPACE;
     }
     static LV2_Worker_Status respond(void* p, std::uint32_t n, const void* b) {
         auto& self = *static_cast<Lv2Backend*>(p);
-        if (n > 65536 || (n && !b))
-            return LV2_WORKER_ERR_NO_SPACE;
-        Lv2Work work{};
-        work.bytes = n;
-        if (n)
-            std::memcpy(work.data.data(), b, n);
-        return self.responses_.push(work) ? LV2_WORKER_SUCCESS : LV2_WORKER_ERR_NO_SPACE;
+        return self.responses_.push(n, b) ? LV2_WORKER_SUCCESS : LV2_WORKER_ERR_NO_SPACE;
     }
     void stopWorker() noexcept {
         quit_.store(true);
@@ -190,9 +271,9 @@ class Lv2Backend final : public PluginBackend {
             workerThread_.join();
         if (instance_ && worker_ && worker_->work_response) {
             PluginAudioScope audio(this);
-            while (const auto* response = responses_.peek()) {
-                worker_->work_response(lilv_instance_get_handle(instance_), response->bytes,
-                                       response->data.data());
+            std::uint32_t bytes = 0;
+            while (const auto* response = responses_.peek(bytes)) {
+                worker_->work_response(lilv_instance_get_handle(instance_), bytes, response);
                 responses_.discard();
             }
         }
@@ -204,10 +285,14 @@ class Lv2Backend final : public PluginBackend {
         if (!worker_ || !worker_->work)
             return;
         workerThread_ = std::thread([this] {
-            while (!quit_.load() || requests_.peek()) {
-                if (const auto* w = requests_.peek()) {
-                    worker_->work(lilv_instance_get_handle(instance_), respond, this, w->bytes,
-                                  w->data.data());
+            std::uint32_t bytes = 0;
+            while (!quit_.load() || requests_.peek(bytes)) {
+                if (const auto* work = requests_.peek(bytes)) {
+                    {
+                        std::lock_guard lock(workMutex_);
+                        worker_->work(lilv_instance_get_handle(instance_), respond, this, bytes,
+                                      work);
+                    }
                     requests_.discard();
                 } else
                     std::this_thread::sleep_for(std::chrono::milliseconds(1));
@@ -219,6 +304,14 @@ class Lv2Backend final : public PluginBackend {
         sequence_ = urids_.get(LV2_ATOM__Sequence);
         chunk_ = urids_.get(LV2_ATOM__Chunk);
         float_ = urids_.get(LV2_ATOM__Float);
+        lv2_atom_forge_init(&forge_, &urids_.map);
+        timePosition_ = urids_.get(LV2_TIME__Position);
+        timeSpeed_ = urids_.get(LV2_TIME__speed);
+        timeFrame_ = urids_.get(LV2_TIME__frame);
+        timeBpm_ = urids_.get(LV2_TIME__beatsPerMinute);
+        timeBeatUnit_ = urids_.get(LV2_TIME__beatUnit);
+        timeBeatsPerBar_ = urids_.get(LV2_TIME__beatsPerBar);
+        timeBeat_ = urids_.get(LV2_TIME__beat);
         auto integer = urids_.get(LV2_ATOM__Int);
         opts_ = {{{LV2_OPTIONS_INSTANCE, 0, urids_.get(LV2_BUF_SIZE__minBlockLength), 4, integer,
                    &minBlock_},
@@ -246,10 +339,9 @@ class Lv2Backend final : public PluginBackend {
         return false;
     }
     const PluginParameter* parameter(std::uint32_t id) const noexcept {
-        for (const auto& p : desc_.parameters)
-            if (p.id == id)
-                return &p;
-        return nullptr;
+        return id < parameterOfPort_.size() && parameterOfPort_[id] >= 0
+                   ? &desc_.parameters[std::size_t(parameterOfPort_[id])]
+                   : nullptr;
     }
     Status set(const PluginEvent& e) noexcept {
         const auto* p = parameter(e.id);
@@ -271,6 +363,10 @@ class Lv2Backend final : public PluginBackend {
             return Status::unsupported_format;
         worker_ = static_cast<const LV2_Worker_Interface*>(
             lilv_instance_get_extension_data(instance_, LV2_WORKER__interface));
+        if (worker_ && worker_->work && !requests_.ready()) {
+            requests_.prepare();
+            responses_.prepare();
+        }
         connectControls();
         launchWorker();
         return Status::ok;
@@ -454,20 +550,21 @@ template <Sample T> Status Lv2Backend::run(const PluginProcess<T>& p) noexcept {
                     return Status::unsupported_format;
             }
         }
+    // A UI edit that can no longer be applied or recorded is dropped and counted; it
+    // must not stay at the queue head and fail every later block.
     while (const auto* e = uiQueue_.peek()) {
-        auto r = e->event.kind == PluginEventKind::parameterValue ? set(e->event) : Status::ok;
-        if (r != Status::ok)
-            return r;
-        r = events_.add(e->event);
-        if (r != Status::ok)
-            return r;
+        if ((e->event.kind == PluginEventKind::parameterValue && set(e->event) != Status::ok) ||
+            events_.add(e->event) != Status::ok)
+            dropped_.add();
         uiQueue_.discard();
     }
-    if (worker_ && worker_->work_response)
-        while (const auto* w = responses_.peek()) {
-            worker_->work_response(lilv_instance_get_handle(instance_), w->bytes, w->data.data());
+    if (worker_ && worker_->work_response) {
+        std::uint32_t bytes = 0;
+        while (const auto* response = responses_.peek(bytes)) {
+            worker_->work_response(lilv_instance_get_handle(instance_), bytes, response);
             responses_.discard();
         }
+    }
     std::uint32_t begin = 0;
     std::size_t cursor = 0;
     while (begin < p.frames) {
@@ -490,26 +587,37 @@ template <Sample T> Status Lv2Backend::run(const PluginProcess<T>& p) noexcept {
                         return r;
                 }
             }
-        auto in = input_.block(), out = output_.block();
-        for (const auto& port : ports_)
-            if (port.kind == Port::audio && port.input) {
-                auto source = p.inputs[port.bus].channel(port.channel).subspan(begin, end - begin);
-                auto dest = in.channel(port.flat).first(end - begin);
-                if constexpr (std::same_as<T, float>) {
-                    auto r = vectors_.copy(source, dest);
-                    if (r != Status::ok)
-                        return r;
-                } else
-                    for (std::size_t frame = 0; frame < dest.size(); ++frame)
-                        dest[frame] = float(source[frame]);
+        const auto frames = end - begin;
+        if constexpr (std::same_as<T, float>) {
+            // Native precision runs directly on the caller's memory. The instance never
+            // lets an LV2 output alias an input, so nothing is copied in or out.
+            for (const auto i : audioInputs_) {
+                const auto& port = ports_[i];
+                lilv_instance_connect_port(
+                    instance_, i,
+                    const_cast<float*>(p.inputs[port.bus].channel(port.channel).data() + begin));
             }
-        for (std::size_t i = 0; i < ports_.size(); ++i) {
+            for (const auto i : audioOutputs_) {
+                const auto& port = ports_[i];
+                lilv_instance_connect_port(
+                    instance_, i, p.outputs[port.bus].channel(port.channel).data() + begin);
+            }
+        } else {
+            // Double blocks convert through the float storage that the audio ports
+            // have been connected to since activate(); nothing is reconnected here.
+            auto in = input_.block();
+            for (const auto i : audioInputs_) {
+                const auto& port = ports_[i];
+                auto source = p.inputs[port.bus].channel(port.channel).subspan(begin, frames);
+                auto dest = in.channel(port.flat).first(frames);
+                for (std::size_t frame = 0; frame < dest.size(); ++frame)
+                    dest[frame] = float(source[frame]);
+            }
+        }
+        // Atom buffers keep the address connected in activate().
+        for (const auto i : atomPorts_) {
             auto& port = ports_[i];
-            if (port.kind == Port::audio) {
-                lilv_instance_connect_port(instance_, std::uint32_t(i),
-                                           port.input ? in.channel(port.flat).data()
-                                                      : out.channel(port.flat).data());
-            } else if (port.kind == Port::atom) {
+            {
                 auto* seq = reinterpret_cast<LV2_Atom_Sequence*>(port.data.data());
                 const auto capacity = std::uint32_t(port.data.size() * 8);
                 seq->atom = {port.input ? std::uint32_t(sizeof(LV2_Atom_Sequence_Body))
@@ -518,31 +626,30 @@ template <Sample T> Status Lv2Backend::run(const PluginProcess<T>& p) noexcept {
                 seq->body = {0, 0};
                 if (port.input && port.time) {
                     alignas(8) std::array<std::uint8_t, 512> timeBytes{};
-                    LV2_Atom_Forge forge;
-                    lv2_atom_forge_init(&forge, &urids_.map);
+                    LV2_Atom_Forge forge = forge_;
                     lv2_atom_forge_set_buffer(&forge, timeBytes.data(), timeBytes.size());
                     LV2_Atom_Forge_Frame object;
-                    lv2_atom_forge_object(&forge, &object, 0, urids_.get(LV2_TIME__Position));
+                    lv2_atom_forge_object(&forge, &object, 0, timePosition_);
                     const auto t = p.transport ? *p.transport : PluginTransport{};
-                    lv2_atom_forge_key(&forge, urids_.get(LV2_TIME__speed));
+                    lv2_atom_forge_key(&forge, timeSpeed_);
                     lv2_atom_forge_float(&forge, t.playing ? 1.f : 0.f);
                     if (t.hasSongFrame || p.steadyFrame >= 0) {
-                        lv2_atom_forge_key(&forge, urids_.get(LV2_TIME__frame));
+                        lv2_atom_forge_key(&forge, timeFrame_);
                         lv2_atom_forge_long(&forge,
                                             (t.hasSongFrame ? t.songFrame : p.steadyFrame) + begin);
                     }
                     if (t.hasTempo) {
-                        lv2_atom_forge_key(&forge, urids_.get(LV2_TIME__beatsPerMinute));
+                        lv2_atom_forge_key(&forge, timeBpm_);
                         lv2_atom_forge_float(&forge, float(t.tempo));
                     }
                     if (t.hasSignature) {
-                        lv2_atom_forge_key(&forge, urids_.get(LV2_TIME__beatUnit));
+                        lv2_atom_forge_key(&forge, timeBeatUnit_);
                         lv2_atom_forge_int(&forge, t.denominator);
-                        lv2_atom_forge_key(&forge, urids_.get(LV2_TIME__beatsPerBar));
+                        lv2_atom_forge_key(&forge, timeBeatsPerBar_);
                         lv2_atom_forge_float(&forge, float(t.numerator));
                     }
                     if (t.hasBeats) {
-                        lv2_atom_forge_key(&forge, urids_.get(LV2_TIME__beat));
+                        lv2_atom_forge_key(&forge, timeBeat_);
                         lv2_atom_forge_double(&forge, t.beats + begin / options_.sampleRate *
                                                                     t.tempo / 60.);
                     }
@@ -560,7 +667,9 @@ template <Sample T> Status Lv2Backend::run(const PluginProcess<T>& p) noexcept {
                 if (port.input && port.midi && p.inputEvents)
                     for (std::size_t j = cursor; j < p.inputEvents->size(); ++j) {
                         const auto& e = *p.inputEvents->event(j);
-                        if (e.frame < begin || e.frame >= end || e.port != std::int16_t(port.bus))
+                        if (e.frame >= end)
+                            break; // Events are ordered by frame.
+                        if (e.frame < begin || e.port != std::int16_t(port.bus))
                             continue;
                         std::array<std::uint8_t, 3> b;
                         auto bytes = pluginMidi(e, b);
@@ -581,43 +690,54 @@ template <Sample T> Status Lv2Backend::run(const PluginProcess<T>& p) noexcept {
                                     size - sizeof(ev) - bytes.size());
                         seq->atom.size += std::uint32_t(size);
                     }
-                lilv_instance_connect_port(instance_, std::uint32_t(i), seq);
             }
         }
-        lilv_instance_run(instance_, end - begin);
-        for (const auto& port : ports_)
-            if (port.kind == Port::audio && !port.input) {
-                auto source = out.channel(port.flat).first(end - begin);
-                auto dest = p.outputs[port.bus].channel(port.channel).subspan(begin, end - begin);
-                if constexpr (std::same_as<T, float>) {
-                    auto r = vectors_.copy(std::span<const float>(source), dest);
-                    if (r != Status::ok)
-                        return r;
-                } else
-                    for (std::size_t frame = 0; frame < dest.size(); ++frame)
-                        dest[frame] = T(source[frame]);
+        lilv_instance_run(instance_, frames);
+        if constexpr (std::same_as<T, double>) {
+            auto out = output_.block();
+            for (const auto i : audioOutputs_) {
+                const auto& port = ports_[i];
+                auto source = out.channel(port.flat).first(frames);
+                auto dest = p.outputs[port.bus].channel(port.channel).subspan(begin, frames);
+                for (std::size_t frame = 0; frame < dest.size(); ++frame)
+                    dest[frame] = T(source[frame]);
             }
-        for (auto& port : ports_)
-            if (port.kind == Port::atom && !port.input) {
+        }
+        for (const auto i : atomPorts_) {
+            auto& port = ports_[i];
+            if (!port.input) {
                 const auto* seq = reinterpret_cast<const LV2_Atom_Sequence*>(port.data.data());
                 if (seq->atom.type != sequence_)
                     continue;
+                // A malformed output sequence or event is dropped and counted. The audio
+                // this run produced is valid and is never discarded because of it.
                 auto bytes = std::size_t(seq->atom.size);
-                if (bytes < 8 || bytes > port.data.size() * 8 - 8 || seq->body.unit)
-                    return Status::invalid_argument;
+                if (bytes < 8 || bytes > port.data.size() * 8 - 8 || seq->body.unit) {
+                    dropped_.add();
+                    continue;
+                }
                 std::size_t at = sizeof(LV2_Atom_Sequence), stop = bytes + 8;
                 while (at < stop) {
-                    if (stop - at < sizeof(LV2_Atom_Event))
-                        return Status::invalid_argument;
+                    if (stop - at < sizeof(LV2_Atom_Event)) {
+                        dropped_.add();
+                        break;
+                    }
                     const auto* e = reinterpret_cast<const LV2_Atom_Event*>(
                         reinterpret_cast<const std::uint8_t*>(seq) + at);
-                    if (e->body.size > stop - at - sizeof(*e))
-                        return Status::invalid_argument;
+                    if (e->body.size > stop - at - sizeof(*e)) {
+                        dropped_.add();
+                        break;
+                    }
                     auto size = lv2_atom_pad_size(std::uint32_t(sizeof(*e) + e->body.size));
-                    if (size > stop - at)
-                        return Status::invalid_argument;
-                    if (e->time.frames < 0 || std::uint64_t(e->time.frames) >= end - begin)
-                        return Status::invalid_argument;
+                    if (size > stop - at) {
+                        // The last event may omit its trailing padding.
+                        size = std::uint32_t(stop - at);
+                    }
+                    if (e->time.frames < 0 || std::uint64_t(e->time.frames) >= end - begin) {
+                        dropped_.add();
+                        at += size;
+                        continue;
+                    }
                     if (e->body.type == midi_ && port.midi && e->body.size) {
                         auto* b = reinterpret_cast<const std::uint8_t*>(e + 1);
                         PluginEvent event;
@@ -625,13 +745,13 @@ template <Sample T> Status Lv2Backend::run(const PluginProcess<T>& p) noexcept {
                         event.port = std::int16_t(port.bus);
                         event.frame = begin + std::uint32_t(e->time.frames);
                         event.bytes = {b, e->body.size};
-                        auto r = events_.add(event);
-                        if (r != Status::ok)
-                            return r;
+                        if (events_.add(event) != Status::ok)
+                            dropped_.add();
                     }
                     at += size;
                 }
             }
+        }
         begin = end;
         if (p.inputEvents)
             while (cursor < p.inputEvents->size() && p.inputEvents->event(cursor)->frame < end)
@@ -639,12 +759,18 @@ template <Sample T> Status Lv2Backend::run(const PluginProcess<T>& p) noexcept {
     }
     if (worker_ && worker_->end_run)
         worker_->end_run(lilv_instance_get_handle(instance_));
-    for (auto& port : ports_)
-        if (port.kind == Port::control) {
-            port.mirror.store(std::bit_cast<std::uint32_t>(port.value), std::memory_order_relaxed);
+    // Only a control whose value moved is marked for the UI: an idle block no longer
+    // makes every later pump send port_event for every port.
+    for (const auto i : controlPorts_) {
+        auto& port = ports_[i];
+        const auto bits = std::bit_cast<std::uint32_t>(port.value);
+        if (port.mirror.load(std::memory_order_relaxed) != bits) {
+            port.mirror.store(bits, std::memory_order_relaxed);
             port.dirty.store(1, std::memory_order_release);
         }
-    return events_.finish(p.outputEvents);
+    }
+    dropped_.add(events_.finish(p.outputEvents));
+    return Status::ok;
 }
 Status Lv2Backend::initialize(const std::filesystem::path& path, std::string_view id,
                               const PluginHostCallbacks& cb) {
@@ -763,6 +889,18 @@ Status Lv2Backend::initialize(const std::filesystem::path& path, std::string_vie
         return Status::invalid_spec;
     totalInputs_ = ins;
     totalOutputs_ = outs;
+    parameterOfPort_.assign(count, -1);
+    for (std::size_t i = 0; i < desc_.parameters.size(); ++i)
+        parameterOfPort_[desc_.parameters[i].id] = std::int32_t(i);
+    for (std::uint32_t i = 0; i < count; ++i) {
+        const auto& port = ports_[i];
+        if (port.kind == Port::audio)
+            (port.input ? audioInputs_ : audioOutputs_).push_back(i);
+        else if (port.kind == Port::atom)
+            atomPorts_.push_back(i);
+        else if (port.kind == Port::control)
+            controlPorts_.push_back(i);
+    }
     auto* uis = lilv_plugin_get_uis(plugin_);
     Node nativeUi(world_.value,
 #if defined(_WIN32)
@@ -775,13 +913,7 @@ Status Lv2Backend::initialize(const std::filesystem::path& path, std::string_vie
     );
     LILV_FOREACH(uis, u, uis) if (lilv_ui_is_a(lilv_uis_get(uis, u), nativeUi)) desc_.editor = true;
     lilv_uis_free(uis);
-    auto q = requests_.prepare(16);
-    if (q != Status::ok)
-        return q;
-    q = responses_.prepare(16);
-    if (q != Status::ok)
-        return q;
-    q = uiQueue_.prepare(1024);
+    auto q = uiQueue_.prepare(1024);
     if (q != Status::ok)
         return q;
     return instantiate();
@@ -801,11 +933,14 @@ Status Lv2Backend::activate(const PluginPrepareOptions& o) noexcept {
         if (ui_ && (sampleRate_ != o.sampleRate || std::uint32_t(maxBlock_) < o.maximumFrames))
             return Status::transition_in_progress;
         if (sampleRate_ != o.sampleRate || std::uint32_t(maxBlock_) < o.maximumFrames) {
+            // Drain accepted work before the state is read from this instance.
+            stopWorker();
             std::vector<std::uint8_t> saved;
             auto r = saveState(saved, 64 * 1024 * 1024);
-            if (r != Status::ok)
+            if (r != Status::ok) {
+                launchWorker();
                 return r;
-            stopWorker();
+            }
             lilv_instance_free(instance_);
             instance_ = nullptr;
             for (auto& p : desc_.parameters)
@@ -825,9 +960,6 @@ Status Lv2Backend::activate(const PluginPrepareOptions& o) noexcept {
             if (r != Status::ok)
                 return r;
         }
-        auto vectorStatus = VectorOps::create(CpuBackend::automatic, vectors_);
-        if (vectorStatus != Status::ok)
-            return vectorStatus;
         options_ = o;
         auto r = input_.resize(totalInputs_ ? totalInputs_ : 1, o.maximumFrames);
         if (r != Status::ok)
@@ -838,7 +970,15 @@ Status Lv2Backend::activate(const PluginPrepareOptions& o) noexcept {
         for (auto& p : ports_)
             if (p.kind == Port::atom)
                 p.data.resize(std::size_t(sequenceBytes_) / 8);
-        events_.prepare(o.maximumEvents, 16 * 1024 * 1024);
+        // Output payload is bounded by what the MIDI output sequences can hold; a few
+        // sub-blocks of headroom instead of a fixed 16 MiB per instance.
+        std::size_t midiOutputs = 0;
+        for (const auto i : atomPorts_)
+            if (!ports_[i].input && ports_[i].midi)
+                ++midiOutputs;
+        events_.prepare(o.maximumEvents,
+                        std::min<std::size_t>(16 * 1024 * 1024,
+                                              midiOutputs * std::size_t(sequenceBytes_) * 4));
         for (std::size_t i = 0; i < ports_.size(); ++i) {
             auto& p = ports_[i];
             if (p.kind == Port::audio)
@@ -852,8 +992,11 @@ Status Lv2Backend::activate(const PluginPrepareOptions& o) noexcept {
                 seq->body = {0, 0};
                 lilv_instance_connect_port(instance_, std::uint32_t(i), seq);
             }
-            if (p.kind == Port::control)
+            if (p.kind == Port::control) {
+                // One full UI refresh per activation; later only changes are sent.
                 p.mirror.store(std::bit_cast<std::uint32_t>(p.value));
+                p.dirty.store(1, std::memory_order_release);
+            }
         }
         lilv_instance_activate(instance_);
         active_ = true;
@@ -879,9 +1022,13 @@ Status Lv2Backend::saveState(std::vector<std::uint8_t>& out, std::size_t limit) 
                 }
             return nullptr;
         };
-        auto* s = lilv_state_new_from_instance(
-            plugin_, instance_, &urids_.map, nullptr, nullptr, nullptr, nullptr, get, this,
-            LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE, featurePointers_.data());
+        LilvState* s = nullptr;
+        {
+            std::lock_guard lock(workMutex_);
+            s = lilv_state_new_from_instance(
+                plugin_, instance_, &urids_.map, nullptr, nullptr, nullptr, nullptr, get, this,
+                LV2_STATE_IS_POD | LV2_STATE_IS_PORTABLE, featurePointers_.data());
+        }
         if (!s)
             return Status::io_error;
         char* data = lilv_state_to_string(world_.value, &urids_.map, &urids_.unmap, s,
@@ -936,7 +1083,10 @@ Status Lv2Backend::loadState(std::span<const std::uint8_t> data) noexcept {
                         p.value = v;
                 }
         };
-        lilv_state_restore(state, instance_, setPort, this, 0, featurePointers_.data());
+        {
+            std::lock_guard lock(workMutex_);
+            lilv_state_restore(state, instance_, setPort, this, 0, featurePointers_.data());
+        }
         lilv_state_free(state);
         return Status::ok;
     } catch (...) {
@@ -1081,10 +1231,10 @@ void Lv2Backend::closeEditor() noexcept {
     uiLibrary_.reset();
 }
 std::uint32_t Lv2Backend::pumpMainThread() noexcept {
-    std::uint32_t flags = uiRequests_.exchange(0);
+    std::uint32_t flags = uiRequests_.exchange(0) | dropped_.take();
     if (ui_ && uiIdle_ && uiIdle_->idle && uiIdle_->idle(ui_)) {
-        closeEditor();
-        return pluginEditorClosed;
+        closeEditor(); // The flags gathered above are still delivered below.
+        flags |= pluginEditorClosed;
     }
     if (ui_ && uiDescriptor_->port_event)
         for (std::size_t i = 0; i < ports_.size(); ++i) {

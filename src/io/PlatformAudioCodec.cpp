@@ -236,10 +236,8 @@ struct Reader : choc::audio::AudioFileReader {
         ThreadCom com;
         reader.Reset();
     }
-    bool seek(std::uint64_t frame) {
+    bool rewind() {
         ThreadCom com;
-        // Exact decoded-frame indexing: reset at the beginning and discard frames.
-        // This avoids container timestamp rounding and compressed packet preroll ambiguity.
         PROPVARIANT v;
         PropVariantInit(&v);
         v.vt = VT_I8;
@@ -250,6 +248,16 @@ struct Reader : choc::audio::AudioFileReader {
         offset = 0;
         position = 0;
         eof = false;
+        return true;
+    }
+    bool seek(std::uint64_t frame) {
+        ThreadCom com;
+        // Exact decoded-frame indexing: frames are discarded up to the target, which
+        // avoids container timestamp rounding and compressed packet preroll ambiguity.
+        // Only a backward seek has to restart at the beginning; a forward one keeps
+        // decoding from the current position.
+        if (frame < position && !rewind())
+            return false;
         while (position < frame) {
             if (offset == cached.size() && !next())
                 return false;
@@ -336,7 +344,7 @@ struct Reader : choc::audio::AudioFileReader {
         }
         if (!eof)
             return false;
-        return seek(0);
+        return rewind();
     }
     template <class T> bool frames(std::uint64_t first, choc::buffer::ChannelArrayView<T> out) {
         if (out.getNumChannels() != properties.numChannels)
@@ -637,3 +645,34 @@ std::unique_ptr<choc::audio::AudioFileReader> platformReader(const std::filesyst
 }
 } // namespace cyaudio::detail
 #endif
+#include <random>
+#include <system_error>
+namespace cyaudio::detail {
+const char* platformFormatName() noexcept {
+#if defined(_WIN32)
+    return "Windows platform";
+#elif defined(__APPLE__)
+    return "Apple platform";
+#else
+    return "";
+#endif
+}
+std::filesystem::path temporarySibling(const std::filesystem::path& destination) {
+    std::random_device random;
+    auto name = destination;
+    name += ".cyaudio-" + std::to_string(random()) + "-" + std::to_string(random()) + ".tmp";
+    name += destination.extension(); // Platform encoders may look at the extension.
+    return name;
+}
+bool replaceFile(const std::filesystem::path& temporary,
+                 const std::filesystem::path& destination) noexcept {
+#if defined(_WIN32)
+    return MoveFileExW(temporary.c_str(), destination.c_str(),
+                       MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+#else
+    std::error_code error;
+    std::filesystem::rename(temporary, destination, error); // Atomic replacement on POSIX.
+    return !error;
+#endif
+}
+} // namespace cyaudio::detail

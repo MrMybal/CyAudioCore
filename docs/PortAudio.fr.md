@@ -148,8 +148,13 @@ Les identités miniaudio restent inchangées. Les tokens PortAudio
 `cyaudio.portaudio/1/...` sont propres au contexte et proviennent du backend, de la
 direction et du nom, sans index d'énumération persistant. `persistentIdentity=false`
 et `persistentId` vide sont explicites. Les réordonnancements sont tolérés dans ce
-contexte ; des noms identiques pour une même direction/backend sont ambigus et
-refusés. Après recréation du contexte, réénumérer et employer un sélecteur avec
+contexte. Des noms identiques pour une même direction/backend restent ouvrables :
+le premier garde le token simple, les suivants reçoivent un suffixe ordinal (`/2`,
+`/3`). Cet ordinal suit l'ordre d'énumération : il peut s'échanger entre deux
+périphériques identiques après une réénumération. Tant qu'aucun flux n'est ouvert,
+le catalogue n'est réinitialisé qu'une fois par intervalle (2 s par défaut), ce qui
+peut retarder d'autant la détection d'un rebranchement. Après recréation du contexte,
+réénumérer et employer un sélecteur avec
 `provider=portAudio` ; tout repli par nom doit être explicitement accepté.
 
 ## Validation et références

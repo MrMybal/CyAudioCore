@@ -107,7 +107,9 @@ WinMM device-interface identities are preferred; name fallback is explicit and
 duplicate names return ambiguous. Backends without persistent IDs remain
 explicitly identified instead of guessing.
 Native MIDI2 retains endpoint IDs. Android's host can provide its opened AMidi
-connection through the driver interface. A full queue returns update_queue_full;
+connection through the driver interface. Outgoing short messages/UMP and SysEx use
+separate queues that keep the send order; the SysEx queue holds
+min(queuedMessages, 64) messages. A full queue returns update_queue_full;
 outgoing packets remain queued on temporary transport pressure. Disconnect
 invalidates queued input/output epochs. Observe connected()/generation() at the
 audio boundary and release held voices in the application. Never destroy,
@@ -119,6 +121,9 @@ arrival timestamps. Collection maps events to offsets in the current block,
 retains future events and orders equal timestamps stably. Late policy is clamp
 or drop. It does not estimate hardware-to-system clock drift or invent a device
 latency. invalidate() belongs to the producer; reset() requires both owners idle.
+An event larger than the whole destination MidiBuffer can never be delivered: it is
+dropped and counted by oversizedMessages(), the remaining events are delivered and
+collect returns block_too_large for that block.
 
 MidiInput/MidiOutput openVirtual is available only when RtMidi's selected native
 backend supports virtual ports (CoreMIDI, ALSA, JACK). WinMM returns

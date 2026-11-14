@@ -107,10 +107,17 @@ Status UmpEndpointNegotiator::advance() noexcept {
 Status UmpEndpointNegotiator::process(const UmpPacket& p, std::uint64_t now) noexcept {
     if (!send_)
         return Status::not_prepared;
-    if (pending_ && now >= started_ && now - started_ >= 3000) {
+    // An expired negotiation is reported, but the packet in hand is still a valid peer
+    // message (often its discovery): it is handled first instead of being discarded.
+    const bool expired = pending_ && now >= started_ && now - started_ >= 3000;
+    if (expired)
         pending_ = false;
-        return Status::timed_out;
-    }
+    const auto result = handle(p);
+    return expired && (result == Status::ok || result == Status::unsupported_format)
+               ? Status::timed_out
+               : result;
+}
+Status UmpEndpointNegotiator::handle(const UmpPacket& p) noexcept {
     if (is(p, 0)) {
         if ((p.words[0] & 0xff00) != 0x0100)
             return Status::unsupported_format;

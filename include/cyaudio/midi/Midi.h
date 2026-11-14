@@ -44,6 +44,7 @@ struct MidiBufferEvent {
 class MidiBuffer {
   public:
     Status prepare(std::size_t maximumEvents, std::size_t maximumBytes) noexcept;
+    // update_queue_full: no room until reset. block_too_large: exceeds maximumBytes, can never fit.
     Status add(std::uint32_t frame, std::span<const std::uint8_t>) noexcept;
     void reset() noexcept {
         count_ = used_ = 0;
@@ -103,7 +104,26 @@ struct MidiFile {
     std::vector<std::vector<MidiFileEvent>> tracks;
     Status parse(std::span<const std::uint8_t>, std::size_t maximumEvents = 1000000) noexcept;
     Status serialize(std::vector<std::uint8_t>&) const noexcept;
-    // Type 0/1 share a tempo map. Type 2 uses the selected independent track.
+    // Type 0/1 share a tempo map. Type 2 uses the selected independent track. Scans the
+    // tempo events on every call and never allocates; for many lookups use MidiTempoMap.
     Status tickToSeconds(std::uint64_t tick, double& seconds, std::size_t track = 0) const noexcept;
+};
+// Tempo map of a MidiFile, with the same results as MidiFile::tickToSeconds. prepare sorts
+// the tempo events once (allocates: worker thread) and rejects a malformed tempo event
+// anywhere in the file; tickToSeconds is then a binary search without allocation. The map
+// is a copy: prepare again after editing the file.
+class MidiTempoMap {
+  public:
+    Status prepare(const MidiFile&, std::size_t track = 0) noexcept;
+    Status tickToSeconds(std::uint64_t tick, double& seconds) const noexcept;
+
+  private:
+    struct Point {
+        std::uint64_t tick;
+        double seconds, tempo;
+    };
+    std::vector<Point> points_;
+    double rate_ = 0; // SMPTE divisions: ticks per second, no tempo points.
+    std::uint16_t division_ = 0;
 };
 } // namespace cyaudio

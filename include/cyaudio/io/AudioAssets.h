@@ -9,6 +9,9 @@ struct AudioPeak {
 };
 // Immutable peak pyramid. Build/save/load are control/worker operations.
 // Views are allocation-free and borrowed until move/rebuild/destruction.
+// save replaces the cache only by a complete file (sibling temporary + rename). load
+// checks the source stamp (size and write time); a header-parsed source is reopened to
+// compare its shape, a platform-decoded one (M4A/AAC/WMA...) is not decoded again.
 class WaveformPeakCache {
   public:
     WaveformPeakCache();

@@ -18,8 +18,10 @@ struct Midi2ControllerChange {
     UmpPacket packet;
     std::uint32_t value = 0; // Absolute value, including resolved relative operations.
 };
-// Single owner. Retains all CCs and bounded sparse RPN/NRPN values. Per-note
-// operations are delivered verbatim for voice-specific reset/detach handling.
+// Single owner. Retains all CCs and bounded sparse RPN/NRPN values; when that table is
+// full, a new parameter replaces the one written longest ago (channel fields such as
+// pitchRange keep their value). Per-note operations are delivered verbatim for
+// voice-specific reset/detach handling.
 class Midi2Controllers {
   public:
     using Callback = void (*)(void*, const Midi2ControllerChange&) noexcept;

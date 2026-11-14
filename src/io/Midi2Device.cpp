@@ -9,8 +9,50 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#if defined(_WIN32)
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+#endif
 namespace cyaudio {
 namespace {
+// The worker's 1 ms pause between turns. On Windows, Sleep/sleep_for wake on the scheduler
+// tick (15.6 ms unless another program raised it); a high-resolution waitable timer
+// (Windows 10 1803 and later) honours the request, with Sleep as the fallback.
+class WorkerPause {
+  public:
+#if defined(_WIN32)
+    WorkerPause() noexcept
+        : timer_(CreateWaitableTimerExW(nullptr, nullptr, highResolution,
+                                        TIMER_MODIFY_STATE | SYNCHRONIZE)) {}
+    ~WorkerPause() {
+        if (timer_)
+            CloseHandle(timer_);
+    }
+    WorkerPause(const WorkerPause&) = delete;
+    WorkerPause& operator=(const WorkerPause&) = delete;
+    void wait() noexcept {
+        LARGE_INTEGER due;
+        due.QuadPart = -10000; // Relative, in 100 ns units.
+        if (timer_ && SetWaitableTimer(timer_, &due, 0, nullptr, nullptr, FALSE) &&
+            WaitForSingleObject(timer_, 100) == WAIT_OBJECT_0)
+            return;
+        Sleep(1);
+    }
+
+  private:
+    static constexpr DWORD highResolution = 0x00000002; // CREATE_WAITABLE_TIMER_HIGH_RESOLUTION
+    HANDLE timer_ = nullptr;
+#else
+    void wait() noexcept {
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+#endif
+};
 class SysExQueue {
     struct Meta {
         std::uint64_t timestamp = 0;
@@ -86,6 +128,10 @@ struct Midi2Device::State {
     std::atomic_flag receiving = ATOMIC_FLAG_INIT;
     UmpStreamParser parser;
     std::uint64_t packetTime = 0;
+    // framed: the transport hands over whole packets per callback (Windows MIDI Services,
+    // CoreMIDI, loopback); byte/word streams (descriptors, AMidi) may split one anywhere.
+    // lossless: the loopback reports a full incoming queue to its sender instead of dropping.
+    bool framed = false, lossless = false, full = false;
     std::mutex startupMutex;
     std::condition_variable startup;
     bool ready = false;
@@ -112,12 +158,21 @@ struct Midi2Device::State {
                 {&word, 1},
                 [](void* p, const UmpPacket& packet) noexcept {
                     auto& a = *static_cast<State*>(p);
-                    if (!a.input.push({packet, a.packetTime}))
+                    if (a.input.push({packet, a.packetTime}))
+                        return;
+                    if (a.lossless)
+                        a.full = true;
+                    else
                         a.dropped.fetch_add(1, std::memory_order_relaxed);
                 },
                 &s);
             if (status != Status::ok)
                 s.dropped.fetch_add(1, std::memory_order_relaxed);
+        }
+        // A truncated packet must not swallow the first words of the next callback.
+        if (s.framed && s.parser.incomplete()) {
+            s.parser.reset();
+            s.dropped.fetch_add(1, std::memory_order_relaxed);
         }
         s.receiving.clear(std::memory_order_release);
     }
@@ -125,9 +180,12 @@ struct Midi2Device::State {
         State& state;
         explicit Loopback(State& s) : state(s) {}
         Status send(const Midi2TimedPacket& p) noexcept override {
+            // Worker thread only. A full incoming queue is backpressure, like a real link:
+            // the worker keeps the packet and retries, so a fast drain cannot lose data.
+            state.full = false;
             receive(&state, {p.packet.words.data(), p.packet.count},
                     p.timestampNs ? p.timestampNs : midi2TimestampNow());
-            return Status::ok;
+            return state.full ? Status::would_block : Status::ok;
         }
         Status poll() noexcept override {
             return Status::ok;
@@ -136,6 +194,9 @@ struct Midi2Device::State {
     void run() noexcept {
         std::unique_ptr<detail::NativeMidi2> backend;
         Status status;
+        lossless = request.endpoint.backend == Midi2Backend::loopback;
+        framed = lossless || request.endpoint.backend == Midi2Backend::windowsServices ||
+                 request.endpoint.backend == Midi2Backend::coreMidi;
         try {
             if (request.endpoint.backend == Midi2Backend::loopback) {
                 backend = std::make_unique<Loopback>(*this);
@@ -163,6 +224,7 @@ struct Midi2Device::State {
         std::size_t sysexOffset = 0;
         unsigned blocked = 0; // 1 normal, 2 SysEx: retry the same partial native packet.
         std::array<bool, 16> rawSysEx{};
+        WorkerPause pause;
         while (!stop.load(std::memory_order_acquire)) {
             status = backend->poll();
             if (status != Status::ok && status != Status::would_block) {
@@ -171,7 +233,14 @@ struct Midi2Device::State {
             }
             // Bound work per turn, prioritizing normal events. Timestamp ordering is FIFO per
             // producer.
-            for (unsigned i = 0; i < 256 && blocked != 2; ++i) {
+            // more: a queue used its whole budget, so due work is still waiting and the
+            // backend is accepting it. Then the next turn starts at once instead of pausing.
+            bool more = false;
+            for (unsigned i = 0; blocked != 2; ++i) {
+                if (i == 256) {
+                    more = true;
+                    break;
+                }
                 const auto* p = output.peek();
                 if (!p)
                     break;
@@ -198,7 +267,11 @@ struct Midi2Device::State {
             }
             if (error.load(std::memory_order_acquire))
                 break;
-            for (unsigned i = 0; i < 32 && blocked != 1; ++i) {
+            for (unsigned i = 0; blocked != 1; ++i) {
+                if (i == 32) {
+                    more = true;
+                    break;
+                }
                 const auto p = sysex.peek();
                 if (!p)
                     break;
@@ -231,7 +304,8 @@ struct Midi2Device::State {
             }
             if (error.load(std::memory_order_acquire))
                 break;
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            if (!more)
+                pause.wait();
         }
         // Native backend is destroyed here, on the opening worker (COM/JNI/CoreMIDI ownership).
     }

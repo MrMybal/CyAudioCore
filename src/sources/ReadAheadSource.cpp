@@ -81,7 +81,14 @@ template <Sample T> struct ReadAheadSource<T>::State {
     SpscQueue<CacheRequest> requests;
     std::thread worker;
     std::atomic<bool> stopped{false};
-    std::atomic<std::uint32_t> queued{0}, ack{0}, failure{0}, prefetched{0};
+    std::atomic<std::uint32_t> ack{0}, failure{0}, prefetched{0};
+    // Bumped and notified by whoever gives the worker something to do, so it
+    // sleeps without polling. Notification never blocks the caller.
+    std::atomic<std::uint32_t> wake{0};
+    void signal() noexcept {
+        wake.fetch_add(1, std::memory_order_release);
+        wake.notify_one();
+    }
     std::uint64_t expected = 0;
     std::uint32_t epoch = 0;
     std::atomic<std::uint32_t> misses{0};
@@ -89,33 +96,32 @@ template <Sample T> struct ReadAheadSource<T>::State {
     bool requested = false;
     ~State() {
         stopped.store(true, std::memory_order_release);
+        signal();
         if (worker.joinable())
             worker.join();
     }
     void releaseHeld() noexcept {
         if (held != std::numeric_limits<std::size_t>::max()) {
-            queued.fetch_sub(static_cast<std::uint32_t>(pages[held].count),
-                             std::memory_order_relaxed);
             (void)free.push(held);
             held = std::numeric_limits<std::size_t>::max();
+            signal();
         }
     }
     bool request(std::uint64_t frame) noexcept {
         releaseHeld();
         std::size_t id;
-        for (std::size_t i = 0; i < pageCount && ready.pop(id); ++i) {
-            queued.fetch_sub(static_cast<std::uint32_t>(pages[id].count),
-                             std::memory_order_relaxed);
+        for (std::size_t i = 0; i < pageCount && ready.pop(id); ++i)
             (void)free.push(id);
-        }
         const auto next = epoch + 1;
         if (!requests.push({frame, next})) {
             requested = false;
+            signal();
             return false;
         }
         epoch = next;
         expected = frame;
         requested = true;
+        signal();
         return true;
     }
     Status decode(std::uint64_t first, AudioBlock<T> out) noexcept {
@@ -270,7 +276,12 @@ template <Sample T> struct ReadAheadSource<T>::State {
         std::uint64_t next = 0;
         std::uint32_t generation = 0;
         bool active = false;
-        while (!stopped.load(std::memory_order_acquire)) {
+        for (;;) {
+            // Sampled before the stop flag and the queues: a signal raised afterwards
+            // changes the value, so the wait below returns at once instead of missing it.
+            const auto seen = wake.load(std::memory_order_acquire);
+            if (stopped.load(std::memory_order_acquire))
+                break;
             bool changed = false;
             for (std::size_t i = 0; i < requests.capacity() && requests.pop(request); ++i) {
                 next = request.frame;
@@ -288,7 +299,7 @@ template <Sample T> struct ReadAheadSource<T>::State {
             }
             std::size_t index;
             if (!active || next >= info.frames || !free.pop(index)) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                wake.wait(seen, std::memory_order_acquire);
                 continue;
             }
             auto& page = pages[index];
@@ -300,7 +311,6 @@ template <Sample T> struct ReadAheadSource<T>::State {
                 active = false;
             }
             next += page.count;
-            queued.fetch_add(static_cast<std::uint32_t>(page.count), std::memory_order_relaxed);
             if (!ready.push(index)) {
                 failure.store(static_cast<std::uint32_t>(Status::update_queue_full),
                               std::memory_order_release);
@@ -590,15 +600,22 @@ Status ReadAheadSource<T>::readAt(std::uint64_t first, AudioBlock<T> out,
         validateProcessBlocks<T>({s.info.sampleRate, 1048576, s.info.channels}, out, out);
     if (status != Status::ok)
         return status;
-    for (std::size_t ch = 0; ch < out.channels(); ++ch)
-        s.ops.fill(out.channel(ch), T{});
     if (!out.frames())
         return Status::ok;
-    if (first >= s.info.frames)
+    // Copied frames overwrite the destination; only the unread tail is cleared,
+    // on every exit, instead of clearing everything before copying over it.
+    const auto pad = [&]() noexcept {
+        for (std::size_t ch = 0; ch < out.channels(); ++ch)
+            s.ops.fill(out.channel(ch).subspan(count), T{});
+    };
+    if (first >= s.info.frames) {
+        pad();
         return Status::end_of_stream;
+    }
     if (!s.requested || first != s.expected)
         if (!s.request(first)) {
             ++s.misses;
+            pad();
             return Status::would_block;
         }
     std::size_t visited = 0;
@@ -614,8 +631,10 @@ Status ReadAheadSource<T>::readAt(std::uint64_t first, AudioBlock<T> out,
             s.releaseHeld();
             continue;
         }
-        if (page.status != Status::ok)
+        if (page.status != Status::ok) {
+            pad();
             return page.status;
+        }
         if (position < page.first)
             break;
         const auto offset = static_cast<std::size_t>(position - page.first),
@@ -630,6 +649,7 @@ Status ReadAheadSource<T>::readAt(std::uint64_t first, AudioBlock<T> out,
     s.expected = first + count;
     if (count == out.frames())
         return Status::ok;
+    pad();
     if (s.expected >= s.info.frames)
         return Status::end_of_stream;
     const auto error = s.failure.load(std::memory_order_acquire);
@@ -690,13 +710,21 @@ template <Sample T> struct BackgroundRecorder<T>::State {
     std::thread worker;
     std::atomic<bool> stop{false};
     std::atomic<std::uint32_t> error{0}, dropped{0};
+    // Same non-blocking wake as the read-ahead worker: no polling while idle.
+    std::atomic<std::uint32_t> wake{0};
+    void signal() noexcept {
+        wake.fetch_add(1, std::memory_order_release);
+        wake.notify_one();
+    }
     ~State() {
         stop.store(true, std::memory_order_release);
+        signal();
         if (worker.joinable())
             worker.join();
     }
     void run() noexcept {
         for (;;) {
+            const auto seen = wake.load(std::memory_order_acquire);
             RecorderJob job;
             bool available = ready.pop(job);
             if (!available && stop.load(std::memory_order_acquire)) {
@@ -713,7 +741,7 @@ template <Sample T> struct BackgroundRecorder<T>::State {
                     error.store(static_cast<std::uint32_t>(status), std::memory_order_release);
                 (void)free.push(job.index);
             } else
-                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                wake.wait(seen, std::memory_order_acquire);
         }
         const auto status = writer.close();
         if (status != Status::ok)
@@ -787,12 +815,16 @@ template <Sample T> Status BackgroundRecorder<T>::push(AudioBlock<const T> in) n
     }
     for (std::size_t ch = 0; ch < in.channels(); ++ch)
         (void)s.ops.copy(in.channel(ch), s.blocks[i].block(in.frames()).channel(ch));
-    return s.ready.push({i, in.frames()}) ? Status::ok : Status::update_queue_full;
+    if (!s.ready.push({i, in.frames()}))
+        return Status::update_queue_full;
+    s.signal();
+    return Status::ok;
 }
 template <Sample T> Status BackgroundRecorder<T>::finish() noexcept {
     if (!state_)
         return Status::not_prepared;
     state_->stop.store(true, std::memory_order_release);
+    state_->signal();
     if (state_->worker.joinable())
         state_->worker.join();
     return static_cast<Status>(state_->error.load(std::memory_order_acquire));

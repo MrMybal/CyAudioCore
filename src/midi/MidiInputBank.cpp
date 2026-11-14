@@ -1,6 +1,5 @@
 #include "cyaudio/core/DspTypes.h"
 #include "cyaudio/midi/MidiInputBank.h"
-#include <atomic>
 namespace cyaudio {
 struct MidiInputBank::State {
     struct Port {
@@ -8,8 +7,7 @@ struct MidiInputBank::State {
         MidiStreamParser parser;
         MidiBuffer midi;
         UmpBuffer ump;
-        std::atomic<std::uint32_t> generation{1};
-        std::uint32_t seen = 1;
+        std::uint32_t seen = 1; // Audio side: collector epoch + 1 of the last block.
         std::uint64_t arrival = 0;
         Status error = Status::ok;
         bool release = false;
@@ -92,7 +90,6 @@ Status MidiInputBank::invalidate(std::size_t id) noexcept {
     auto& p = *state_->ports[id];
     p.parser.reset();
     p.collector.invalidate();
-    p.generation.fetch_add(1, std::memory_order_release);
     return Status::ok;
 }
 Status MidiInputBank::collect(const AudioClockAnchor& anchor, std::uint32_t frames) noexcept {
@@ -109,17 +106,15 @@ Status MidiInputBank::collect(const AudioClockAnchor& anchor, std::uint32_t fram
         p.midi.reset();
         p.ump.reset();
         p.release = false;
-        const auto before = p.generation.load(std::memory_order_acquire);
-        if (before != p.seen) {
+        // One collector snapshot decides both the release and the events of this block: an
+        // invalidation racing with the block can neither let old events follow the release
+        // nor wipe events that already belong to the new connection.
+        const auto generation = p.collector.syncEpoch() + 1;
+        if (generation != p.seen) {
             p.releaseMidi();
-            p.seen = before;
+            p.seen = generation;
         }
         const auto r = p.collector.collect(anchor, frames, p.midi, p.ump);
-        const auto after = p.generation.load(std::memory_order_acquire);
-        if (after != before) {
-            p.releaseMidi();
-            p.seen = after;
-        }
         if (r != Status::ok)
             result = r;
     }

@@ -28,10 +28,12 @@ UmpPacket umpPerNoteManagement(unsigned g, unsigned c, unsigned n, bool detach,
 struct Midi2Controllers::State {
     struct Parameter {
         std::uint32_t key = 0, value = 0;
+        std::uint64_t use = 0; // Order of the last write, for eviction.
     };
     std::array<Midi2ChannelControllers, 256> channels;
     std::vector<Parameter> parameters;
     std::size_t used = 0;
+    std::uint64_t uses = 0;
 };
 namespace {
 std::uint32_t key(bool reg, unsigned g, unsigned c, unsigned b, unsigned i) noexcept {
@@ -84,10 +86,11 @@ Status Midi2Controllers::parameter(bool reg, unsigned g, unsigned c, unsigned b,
         }
     return Status::would_block;
 }
-Status Midi2Controllers::process(const UmpPacket& p, Callback callback, void* ctx) noexcept {
+Status Midi2Controllers::process(const UmpPacket& received, Callback callback, void* ctx) noexcept {
     if (!state_)
         return Status::not_prepared;
-    if (!p.valid() || p.type() != 4)
+    auto p = received; // Received data: reserved fields are ignored, not a reason to reject.
+    if (!umpAcceptReceived(p) || p.type() != 4)
         return Status::invalid_argument;
     auto& s = *state_;
     auto& c = s.channels[p.group() * 16 + p.channel() - 1];
@@ -120,10 +123,17 @@ Status Midi2Controllers::process(const UmpPacket& p, Callback callback, void* ct
         auto n = std::size_t(0);
         while (n < s.used && s.parameters[n].key != k)
             ++n;
-        if (n == s.used && s.used == s.parameters.size())
-            return Status::update_queue_full;
-        auto previous = n < s.used ? s.parameters[n].value : 0u;
-        if (n == s.used && reg && bank == 0) {
+        const bool known = n < s.used;
+        if (!known && s.used == s.parameters.size()) {
+            // Full table: forget the parameter written longest ago instead of refusing every
+            // new one for the rest of the session.
+            n = 0;
+            for (std::size_t i = 1; i < s.used; ++i)
+                if (s.parameters[i].use < s.parameters[n].use)
+                    n = i;
+        }
+        auto previous = known ? s.parameters[n].value : 0u;
+        if (!known && reg && bank == 0) {
             if (idx == 0)
                 previous = 2u << 25;
             else if (idx == 1 || idx == 2)
@@ -137,7 +147,7 @@ Status Midi2Controllers::process(const UmpPacket& p, Callback callback, void* ct
             value = std::uint32_t(
                 std::clamp<std::int64_t>(std::int64_t(previous) + delta, 0, 4294967295LL));
         }
-        s.parameters[n] = {k, value};
+        s.parameters[n] = {k, value, ++s.uses};
         if (n == s.used)
             ++s.used;
         if (reg && bank == 0) {

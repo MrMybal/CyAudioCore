@@ -1,7 +1,9 @@
 #pragma once
 #include "cyaudio/core/DspTypes.h"
 #include "PluginInternal.h"
+#include <array>
 #include <bit>
+#include <cmath>
 #include <cstring>
 namespace cyaudio::detail {
 inline std::filesystem::path pathFromUtf8(std::string_view text) {
@@ -39,8 +41,11 @@ inline std::span<const std::uint8_t> pluginMidi(const PluginEvent& e,
     if ((e.kind != PluginEventKind::noteOn && e.kind != PluginEventKind::noteOff) ||
         e.channel < 0 || e.key < 0)
         return {};
-    b = {std::uint8_t((e.kind == PluginEventKind::noteOn ? 0x90 : 0x80) | e.channel),
-         std::uint8_t(e.key), std::uint8_t(std::lround(e.value * 127.))};
+    // MIDI 1 note-on velocity 0 means note-off: a quiet note-on keeps velocity 1.
+    const auto on = e.kind == PluginEventKind::noteOn;
+    const auto velocity = std::lround(e.value * 127.);
+    b = {std::uint8_t((on ? 0x90 : 0x80) | e.channel), std::uint8_t(e.key),
+         std::uint8_t(on && velocity < 1 ? 1 : velocity)};
     return b;
 }
 } // namespace cyaudio::detail

@@ -133,30 +133,35 @@ struct AndroidMidi final : NativeMidi2 {
         if (!input)
             return Status::ok;
         std::array<std::uint8_t, 4096> bytes{};
-        std::size_t size = 0;
-        std::int32_t opcode = 0;
-        std::int64_t timestamp = 0;
-        const auto messages = read(input, &opcode, bytes.data(), bytes.size(), &size, &timestamp);
-        if (messages < 0)
-            return Status::io_error;
-        if (!messages)
-            return Status::would_block;
-        if (opcode == AMIDI_OPCODE_FLUSH) {
-            have = 0;
-            word = 0;
-            receive(context, {}, 0);
-            return Status::ok;
-        }
-        if (opcode != AMIDI_OPCODE_DATA || size > bytes.size())
-            return Status::invalid_argument;
-        for (std::size_t i = 0; i < size; ++i) {
-            word = (word << 8) | bytes[i];
-            if (++have == 4) {
-                receive(context, {&word, 1},
-                        timestamp > 0 ? static_cast<std::uint64_t>(timestamp)
-                                      : midi2TimestampNow());
+        // Drain what is waiting, with a bound: one message per worker turn fell behind a
+        // dense stream and aged the timestamps of everything queued in the port.
+        for (unsigned turn = 0; turn < 64; ++turn) {
+            std::size_t size = 0;
+            std::int32_t opcode = 0;
+            std::int64_t timestamp = 0;
+            const auto messages =
+                read(input, &opcode, bytes.data(), bytes.size(), &size, &timestamp);
+            if (messages < 0)
+                return Status::io_error;
+            if (!messages)
+                return turn ? Status::ok : Status::would_block;
+            if (opcode == AMIDI_OPCODE_FLUSH) {
                 have = 0;
                 word = 0;
+                receive(context, {}, 0);
+                continue;
+            }
+            if (opcode != AMIDI_OPCODE_DATA || size > bytes.size())
+                return Status::invalid_argument;
+            for (std::size_t i = 0; i < size; ++i) {
+                word = (word << 8) | bytes[i];
+                if (++have == 4) {
+                    receive(context, {&word, 1},
+                            timestamp > 0 ? static_cast<std::uint64_t>(timestamp)
+                                          : midi2TimestampNow());
+                    have = 0;
+                    word = 0;
+                }
             }
         }
         return Status::ok;

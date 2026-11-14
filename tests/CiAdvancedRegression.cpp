@@ -526,11 +526,67 @@ void clientLimits() {
     require(!s.client.cached(gain, s.now, true) && s.client.cached(other, s.now, true),
             "LRU reuse after reset");
 }
+// A reply the client rejects has already retired the transport request. The client must
+// complete its own pending entry, and the next request must not reuse that request ID.
+void rejectedReplies() {
+    Session s;
+    const CiPropertyQuery gain{2, "X-Gain"}, list{2, "X-PresetList"};
+    auto reply = [&](std::uint8_t type, std::uint8_t id, std::string_view header,
+                     std::string_view data) {
+        std::array<std::uint8_t, 256> body{}, message{};
+        std::size_t n = 0, size = 0;
+        ok(makeCiPropertyBody({id, 1, 1, bytes(header), bytes(data)}, body, n));
+        ok(makeCiMessage({0x7f, type, 2, 2, 1, {body.data(), n}}, message, size));
+        s.x.now = s.now;
+        return s.a.process({message.data(), size}, s.now);
+    };
+    ok(s.client.fetch(gain, s.now));
+    require(s.x.count == 1, "one GET inquiry queued");
+    const auto first = s.x.pop().data[13];
+    const auto completed = s.x.completed;
+    require(reply(0x35, first, R"({"status":200})", R"({"value":)") == Status::invalid_argument &&
+                s.x.completed == completed + 1 && s.x.status == 400,
+            "malformed GET reply completes the request");
+    ok(s.client.fetch(list, s.now));
+    require(s.x.count == 1 && s.x.packets[s.x.read].data[13] != first,
+            "request IDs advance round-robin");
+    s.drain();
+    s.expect(list, R"([{"id":0},{"id":1},{"id":2}])");
+    require(s.x.status == 200 && !s.client.cached(gain, s.now, true),
+            "next reply is not attributed to the rejected request");
+    ok(s.client.fetch(gain, s.now));
+    s.drain();
+    s.expect(gain, R"({"value":1,"name":"a"})");
+    // Wrong media type and bad cache metadata are completed as well.
+    const CiPropertyQuery typed{2, "X-Gain", {}, "application/octet-stream"};
+    ok(s.client.fetch(typed, s.now));
+    auto id = s.x.pop().data[13];
+    require(reply(0x35, id, R"({"status":200})", R"({"value":1})") == Status::unsupported_format &&
+                s.x.status == 415,
+            "media mismatch completes with 415");
+    ok(s.client.fetch(typed, s.now));
+    id = s.x.pop().data[13];
+    const std::string_view badCache =
+        R"({"status":200,"mediaType":"application/octet-stream","cacheTime":"x"})";
+    require(reply(0x35, id, badCache, "") == Status::invalid_argument && s.x.status == 400,
+            "bad cacheTime completes with 400");
+    // A rejected subscription start must not stay 'starting' forever.
+    ok(s.client.subscribe(gain, s.now));
+    id = s.x.pop().data[13];
+    require(reply(0x39, id, R"({"status":200})", "") == Status::invalid_argument &&
+                s.x.status == 400 && !s.client.activeSubscriptions(),
+            "start reply without subscribeId completes with 400");
+    ok(s.client.subscribe(gain, s.now));
+    s.drain();
+    require(s.client.activeSubscriptions() == 1, "subscription can be started again");
+    s.client.reset();
+}
 } // namespace
 void ciAdvancedRegression() {
     patches();
     service();
     clientLimits();
+    rejectedReplies();
     std::cout
         << "PASS CI partial/instances/pagination/ChannelList/JSONSchema/client-cache/realtime\n";
 }

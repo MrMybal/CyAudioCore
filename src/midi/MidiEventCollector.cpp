@@ -19,8 +19,12 @@ struct MidiEventCollector::State {
     std::vector<std::size_t> heap;
     std::size_t used = 0;
     std::uint64_t sequence = 0;
-    std::atomic<std::uint32_t> overflows{0}, late{0}, epoch{0};
+    std::atomic<std::uint32_t> overflows{0}, late{0}, oversized{0}, epoch{0};
     LateMidiPolicy policy = LateMidiPolicy::clampToFirstFrame;
+    // Consumer side: epoch the heap was last filtered on, whether an arrival of another epoch
+    // entered it since, and whether syncEpoch already took the snapshot for the next collect.
+    std::uint32_t current = 0;
+    bool stale = false, latched = false;
     bool after(std::size_t a, std::size_t b) const noexcept {
         return slots[a].time > slots[b].time ||
                (slots[a].time == slots[b].time && slots[a].sequence > slots[b].sequence);
@@ -28,6 +32,7 @@ struct MidiEventCollector::State {
     void drain() noexcept {
         std::size_t id;
         while (used < heap.size() && ready.pop(id)) {
+            stale = stale || slots[id].epoch != current;
             heap[used++] = id;
             std::push_heap(heap.begin(), heap.begin() + std::ptrdiff_t(used),
                            [&](auto a, auto b) { return after(a, b); });
@@ -37,6 +42,28 @@ struct MidiEventCollector::State {
         std::pop_heap(heap.begin(), heap.begin() + std::ptrdiff_t(used),
                       [&](auto a, auto b) { return after(a, b); });
         (void)free.push(heap[--used]);
+    }
+    // Arrivals are drained before the epoch is read, so no queued event can be newer than it.
+    // The heap is rebuilt only when the epoch moved or an older arrival slipped in afterwards.
+    std::uint32_t sync() noexcept {
+        drain();
+        const auto now = epoch.load(std::memory_order_acquire);
+        if (now != current || stale) {
+            auto kept = std::size_t(0);
+            for (std::size_t i = 0; i < used; ++i) {
+                const auto id = heap[i];
+                if (slots[id].epoch == now)
+                    heap[kept++] = id;
+                else
+                    (void)free.push(id);
+            }
+            used = kept;
+            std::make_heap(heap.begin(), heap.begin() + std::ptrdiff_t(used),
+                           [&](auto a, auto b) { return after(a, b); });
+            current = now;
+            stale = false;
+        }
+        return now;
     }
 };
 MidiEventCollector::MidiEventCollector() = default;
@@ -94,10 +121,12 @@ Status MidiEventCollector::pushMidi(std::uint64_t time,
     (void)s.ready.push(id);
     return Status::ok;
 }
-Status MidiEventCollector::pushUmp(std::uint64_t time, const UmpPacket& packet) noexcept {
+Status MidiEventCollector::pushUmp(std::uint64_t time, const UmpPacket& received) noexcept {
     if (!state_)
         return Status::not_prepared;
-    if (!packet.valid())
+    // Device data: reserved fields are ignored (cleared), everything else must be valid.
+    auto packet = received;
+    if (!umpAcceptReceived(packet))
         return Status::invalid_argument;
     auto& s = *state_;
     std::size_t id;
@@ -124,19 +153,10 @@ Status MidiEventCollector::collect(const AudioClockAnchor& clock, std::uint32_t 
     if (!frames)
         return Status::ok;
     auto& s = *state_;
-    s.drain();
-    const auto epoch = s.epoch.load(std::memory_order_acquire);
-    auto kept = std::size_t(0);
-    for (std::size_t i = 0; i < s.used; ++i) {
-        const auto id = s.heap[i];
-        if (s.slots[id].epoch == epoch)
-            s.heap[kept++] = id;
-        else
-            (void)s.free.push(id);
-    }
-    s.used = kept;
-    std::make_heap(s.heap.begin(), s.heap.begin() + std::ptrdiff_t(s.used),
-                   [&](auto a, auto b) { return s.after(a, b); });
+    if (!s.latched)
+        (void)s.sync();
+    s.latched = false;
+    auto result = Status::ok;
     for (std::size_t emitted = 0; s.used && emitted < s.slots.size(); ++emitted) {
         const auto& slot = s.slots[s.heap[0]];
         const bool late = slot.time < clock.monotonicNanoseconds;
@@ -154,13 +174,27 @@ Status MidiEventCollector::collect(const AudioClockAnchor& clock, std::uint32_t 
         const auto frame = static_cast<std::uint32_t>(offset);
         const auto r = slot.ump ? ump.add(frame, slot.packet)
                                 : midi.add(frame, {slot.bytes.data(), slot.size});
+        if (r == Status::block_too_large) {
+            // Larger than the caller's whole MidiBuffer: retaining it would stall every later
+            // event behind it. Drop, count and report once the rest of the block is collected.
+            s.oversized.fetch_add(1, std::memory_order_relaxed);
+            s.consume();
+            result = r;
+            continue;
+        }
         if (r != Status::ok)
             return r;
         if (late)
             ++s.late;
         s.consume();
     }
-    return Status::ok;
+    return result;
+}
+std::uint32_t MidiEventCollector::syncEpoch() noexcept {
+    if (!state_)
+        return 0;
+    state_->latched = true;
+    return state_->sync();
 }
 void MidiEventCollector::invalidate() noexcept {
     if (state_)
@@ -174,13 +208,18 @@ void MidiEventCollector::reset() noexcept {
     while (s.used)
         s.consume();
     s.sequence = 0;
+    s.stale = s.latched = false;
     s.overflows.store(0);
     s.late.store(0);
+    s.oversized.store(0);
 }
 std::uint32_t MidiEventCollector::overflows() const noexcept {
     return state_ ? state_->overflows.load(std::memory_order_relaxed) : 0;
 }
 std::uint32_t MidiEventCollector::lateMessages() const noexcept {
     return state_ ? state_->late.load(std::memory_order_relaxed) : 0;
+}
+std::uint32_t MidiEventCollector::oversizedMessages() const noexcept {
+    return state_ ? state_->oversized.load(std::memory_order_relaxed) : 0;
 }
 } // namespace cyaudio

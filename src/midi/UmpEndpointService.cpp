@@ -98,10 +98,11 @@ Status UmpEndpointService::process(const UmpPacket& p, std::uint64_t now) noexce
         return Status::invalid_argument;
     auto& s = *state_;
     const auto code = (p.words[0] >> 16) & 0xfff;
+    // Requests come from the peer: reserved filter bits and words are ignored, not rejected.
     if (p.type() == 15 && code == 0) {
-        if ((p.words[0] & 0xff00) != 0x0100 || (p.words[1] & ~31u) || p.words[2] || p.words[3])
+        if ((p.words[0] & 0xff00) != 0x0100)
             return Status::invalid_argument;
-        const auto f = p.words[1];
+        const auto f = p.words[1] & 31u;
         const auto count = std::size_t(bool(f & 1)) + bool(f & 2) + ((f & 4) ? s.name.size() : 0) +
                            ((f & 8) ? s.product.size() : 0) + bool(f & 16);
         if (count > s.queue.size() - s.size)
@@ -119,9 +120,8 @@ Status UmpEndpointService::process(const UmpPacket& p, std::uint64_t now) noexce
         return Status::ok;
     }
     if (p.type() == 15 && code == 0x10) {
-        const auto number = (p.words[0] >> 8) & 255, filter = p.words[0] & 255;
-        if (filter > 3 || p.words[1] || p.words[2] || p.words[3] ||
-            (number != 255 && number >= s.blocks.size()))
+        const auto number = (p.words[0] >> 8) & 255, filter = p.words[0] & 3;
+        if (number != 255 && number >= s.blocks.size())
             return Status::invalid_argument;
         std::size_t count = 0;
         for (auto& b : s.blocks)

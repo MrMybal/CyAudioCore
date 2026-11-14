@@ -9,6 +9,11 @@
 #endif
 #include <windows.h>
 #elif !defined(__ANDROID__)
+#if defined(__linux__)
+#include <linux/futex.h>
+#include <sys/syscall.h>
+#include <ctime>
+#endif
 #include <cerrno>
 #include <csignal>
 #include <fcntl.h>
@@ -203,6 +208,126 @@ void Child::close() noexcept {
             pid = -1;
         }
     }
+#endif
+}
+Wake::~Wake() {
+#if defined(_WIN32)
+    if (handle_)
+        CloseHandle(static_cast<HANDLE>(handle_));
+#endif
+}
+#if defined(_WIN32)
+namespace {
+std::wstring wakeName(std::string_view mapping, std::string_view suffix) {
+    std::wstring name(mapping.begin(), mapping.end());
+    name.append(suffix.begin(), suffix.end());
+    return name;
+}
+} // namespace
+#endif
+Status Wake::create(std::string_view mapping, std::string_view suffix,
+                    std::atomic<std::uint32_t>& word) noexcept {
+    if (word_ || mapping.empty() || mapping.size() + suffix.size() > 120)
+        return Status::invalid_argument;
+#if defined(_WIN32)
+    try {
+        const auto name = wakeName(mapping, suffix);
+        handle_ = CreateEventW(nullptr, FALSE, FALSE, name.c_str());
+        if (!handle_)
+            return Status::io_error;
+        if (GetLastError() == ERROR_ALREADY_EXISTS) {
+            CloseHandle(static_cast<HANDLE>(handle_));
+            handle_ = nullptr;
+            return Status::ambiguous;
+        }
+    } catch (...) {
+        return Status::allocation_failed;
+    }
+#endif
+    word_ = &word;
+    return Status::ok;
+}
+Status Wake::open(std::string_view mapping, std::string_view suffix,
+                  std::atomic<std::uint32_t>& word) noexcept {
+    if (word_ || mapping.empty() || mapping.size() + suffix.size() > 120)
+        return Status::invalid_argument;
+#if defined(_WIN32)
+    try {
+        const auto name = wakeName(mapping, suffix);
+        handle_ = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, name.c_str());
+        if (!handle_)
+            return Status::io_error;
+    } catch (...) {
+        return Status::allocation_failed;
+    }
+#endif
+    word_ = &word;
+    return Status::ok;
+}
+std::uint32_t Wake::token() const noexcept {
+    return word_ ? word_->load(std::memory_order_acquire) : 0;
+}
+void Wake::signal() noexcept {
+    if (!word_)
+        return;
+#if defined(_WIN32)
+    SetEvent(static_cast<HANDLE>(handle_));
+#else
+    word_->fetch_add(1, std::memory_order_release);
+#if defined(__linux__) && !defined(__ANDROID__)
+    (void)syscall(SYS_futex, reinterpret_cast<std::uint32_t*>(word_), FUTEX_WAKE, 1, nullptr,
+                  nullptr, 0);
+#endif
+#endif
+}
+void Wake::wait(std::uint32_t token, unsigned milliseconds) noexcept {
+    if (!word_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(milliseconds));
+        return;
+    }
+#if defined(_WIN32)
+    (void)token;
+    (void)WaitForSingleObject(static_cast<HANDLE>(handle_), milliseconds);
+#elif defined(__linux__) && !defined(__ANDROID__)
+    timespec timeout{};
+    timeout.tv_sec = time_t(milliseconds / 1000);
+    timeout.tv_nsec = long(milliseconds % 1000) * 1000000L;
+    (void)syscall(SYS_futex, reinterpret_cast<std::uint32_t*>(word_), FUTEX_WAIT, token, &timeout,
+                  nullptr, 0);
+#else
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::milliseconds(milliseconds);
+    while (word_->load(std::memory_order_acquire) == token &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+#endif
+}
+void Wake::waitOrMessages(std::uint32_t token, unsigned milliseconds) noexcept {
+#if defined(_WIN32)
+    if (word_) {
+        (void)token;
+        HANDLE handle = static_cast<HANDLE>(handle_);
+        (void)MsgWaitForMultipleObjectsEx(1, &handle, milliseconds, QS_ALLINPUT,
+                                          MWMO_INPUTAVAILABLE);
+        return;
+    }
+#endif
+    wait(token, milliseconds);
+}
+void raiseAudioThreadPriority() noexcept {
+#if defined(_WIN32)
+    // MMCSS "Pro Audio" when the system service library is present; otherwise a
+    // plain priority raise. avrt.dll is resolved from the system directory only.
+    if (const auto avrt = LoadLibraryExW(L"avrt.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {
+        using Characteristics = HANDLE(WINAPI*)(LPCWSTR, LPDWORD);
+        const auto set = reinterpret_cast<Characteristics>(
+            reinterpret_cast<void*>(GetProcAddress(avrt, "AvSetMmThreadCharacteristicsW")));
+        DWORD task = 0;
+        if (set && set(L"Pro Audio", &task))
+            return; // Registration and library stay for the life of the audio thread.
+        FreeLibrary(avrt);
+    }
+    (void)SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 #endif
 }
 std::uint32_t processId() noexcept {

@@ -16,10 +16,16 @@ struct InstrumentPreset {
 };
 // Original versioned CyDSP instrument JSON format. Link CyDSP::Files.
 // Parse/serialize/load/save are control-thread operations, transactional in memory.
+// save replaces the destination only by a complete file (sibling temporary + rename).
 Status parseInstrumentPreset(std::string_view, InstrumentPreset&) noexcept;
 Status serializeInstrumentPreset(const InstrumentPreset&, std::string&) noexcept;
 Status loadInstrumentPreset(const std::filesystem::path&, InstrumentPreset&) noexcept;
 Status saveInstrumentPreset(const std::filesystem::path&, const InstrumentPreset&) noexcept;
+// prepare loads a sample preset's audio file: non-finite samples are rejected, and the
+// frame limit also bounds memory (frames x channels may not exceed twice the limit).
+// A preset from an untrusted source can name any path, including a network share: with
+// confineSamplePath the sample must be a relative path that stays lexically inside
+// baseDirectory (no root, no drive, no leading ".."); symbolic links are not resolved.
 template <Sample T> class Instrument {
   public:
     Instrument();
@@ -29,7 +35,8 @@ template <Sample T> class Instrument {
     Status prepare(const ProcessSpec&, const InstrumentPreset&,
                    const std::filesystem::path& baseDirectory = {},
                    CpuBackend = CpuBackend::automatic,
-                   std::size_t maximumSampleFrames = 67108864) noexcept;
+                   std::size_t maximumSampleFrames = 67108864,
+                   bool confineSamplePath = false) noexcept;
     Status process(AudioBlock<T>, const MidiBuffer* = nullptr, const UmpBuffer* = nullptr,
                    bool add = false) noexcept;
     void reset() noexcept;

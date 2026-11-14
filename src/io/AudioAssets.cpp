@@ -1,5 +1,6 @@
 #include "cyaudio/core/DspTypes.h"
 #include "cyaudio/io/AudioAssets.h"
+#include "PlatformAudioCodec.h"
 #include "cydsp/processors/ChannelMatrix.h"
 #include "cydsp/processors/SincInterpolator.h"
 #include <algorithm>
@@ -89,26 +90,34 @@ Status WaveformPeakCache::build(const std::filesystem::path& source, std::size_t
             r = reader.read(first, audio.block(n), read);
             if (r != Status::ok)
                 return r;
-            for (std::size_t i = 0; i < n; ++i) {
-                const auto frame = first + i, offset = frame % size;
-                const auto bucket = std::size_t(frame / size);
-                for (std::size_t ch = 0; ch < next->info.channels; ++ch) {
-                    const auto value = audio.block().channel(ch)[i];
-                    if (!isFinite(value) || std::abs(value) > std::numeric_limits<float>::max())
-                        return Status::invalid_argument;
-                    auto& p = level.peaks[ch * level.count + bucket];
-                    const auto v = static_cast<float>(value);
-                    if (!offset)
-                        p.minimum = p.maximum = v;
-                    else {
-                        p.minimum = std::min(p.minimum, v);
-                        p.maximum = std::max(p.maximum, v);
+            // Channel-major runs: one bucket division per run instead of per frame, and
+            // a plain min/max/sum-of-squares loop inside it.
+            for (std::size_t ch = 0; ch < next->info.channels; ++ch) {
+                const auto samples = audio.block().channel(ch);
+                for (std::size_t i = 0; i < n;) {
+                    const auto frame = first + i, offset = frame % size;
+                    const auto run = std::size_t(std::min<std::uint64_t>(size - offset, n - i));
+                    auto& p = level.peaks[ch * level.count + std::size_t(frame / size)];
+                    double low = offset ? double(p.minimum) : samples[i],
+                           high = offset ? double(p.maximum) : samples[i], sum = sums[ch];
+                    for (std::size_t j = i; j < i + run; ++j) {
+                        const auto value = samples[j];
+                        low = std::min(low, value);
+                        high = std::max(high, value);
+                        sum += value * value;
                     }
-                    sums[ch] += value * value;
-                    if (offset + 1 == size || frame + 1 == next->info.frames) {
-                        p.rms = static_cast<float>(std::sqrt(sums[ch] / double(offset + 1)));
+                    // NaN poisons the sum; the bounds catch infinities and float overflow.
+                    if (!isFinite(sum) || low < -double(std::numeric_limits<float>::max()) ||
+                        high > double(std::numeric_limits<float>::max()))
+                        return Status::invalid_argument;
+                    p.minimum = static_cast<float>(low);
+                    p.maximum = static_cast<float>(high);
+                    sums[ch] = sum;
+                    if (offset + run == size || frame + run == next->info.frames) {
+                        p.rms = static_cast<float>(std::sqrt(sum / double(offset + run)));
                         sums[ch] = 0;
                     }
+                    i += run;
                 }
             }
             first += n;
@@ -159,6 +168,10 @@ Status WaveformPeakCache::save(const std::filesystem::path& path) const noexcept
     try {
         const auto& s = *state_;
         std::vector<std::uint8_t> out{'C', 'y', 'P', 'e', 'a', 'k', 's', '1'};
+        std::size_t peaks = 0;
+        for (const auto& level : s.levels)
+            peaks += level.peaks.size();
+        out.reserve(64 + 16 * s.levels.size() + 12 * peaks);
         put(out, s.info.frames);
         put(out, std::bit_cast<std::uint64_t>(s.info.sampleRate));
         put(out, s.info.channels);
@@ -173,10 +186,21 @@ Status WaveformPeakCache::save(const std::filesystem::path& path) const noexcept
                     put(out, std::bit_cast<std::uint32_t>(value), 4);
         }
         put(out, hash(out));
-        std::ofstream stream(path, std::ios::binary | std::ios::trunc);
-        stream.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
-        stream.flush();
-        return stream ? Status::ok : Status::io_error;
+        // Written beside the destination and then swapped in: an existing cache is
+        // either kept intact or replaced by a complete one.
+        const auto temporary = detail::temporarySibling(path);
+        bool written = false;
+        {
+            std::ofstream stream(temporary, std::ios::binary | std::ios::trunc);
+            stream.write(reinterpret_cast<const char*>(out.data()), std::streamsize(out.size()));
+            stream.close();
+            written = !stream.fail();
+        }
+        if (written && detail::replaceFile(temporary, path))
+            return Status::ok;
+        std::error_code ec;
+        std::filesystem::remove(temporary, ec);
+        return Status::io_error;
     } catch (const std::bad_alloc&) {
         return Status::allocation_failed;
     } catch (...) {
@@ -247,15 +271,23 @@ Status WaveformPeakCache::load(const std::filesystem::path& path,
         }
         if (previousCount > 1 || reader.position != reader.bytes.size())
             return Status::invalid_argument;
+        // The portable (stream) readers only parse headers, so the source is checked
+        // again. A platform-decoded source would be decoded entirely just to compare
+        // three numbers: the size/time stamp verified above identifies it instead.
         AudioFileReader original;
-        const auto opened = original.open(source);
-        if (opened != Status::ok)
-            return opened;
-        const auto& info = *original.info();
-        if (info.frames != next->info.frames || info.channels != next->info.channels ||
-            info.sampleRate != next->info.sampleRate)
-            return Status::invalid_argument;
-        next->info = info;
+        const auto opened =
+            original.open(std::make_shared<std::ifstream>(source, std::ios::binary));
+        if (opened == Status::ok) {
+            const auto& info = *original.info();
+            if (info.frames != next->info.frames || info.channels != next->info.channels ||
+                info.sampleRate != next->info.sampleRate)
+                return Status::invalid_argument;
+            next->info = info;
+        } else if (opened == Status::unsupported_format && *detail::platformFormatName()) {
+            next->info.formatName = detail::platformFormatName();
+            next->info.encoding = AudioEncoding::float32;
+        } else
+            return opened == Status::invalid_argument ? Status::io_error : opened;
         state_.swap(next);
         return Status::ok;
     } catch (const std::bad_alloc&) {

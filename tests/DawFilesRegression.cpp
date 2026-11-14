@@ -125,8 +125,13 @@ void containers() {
     require(independent.info()->sampleRate == 48000 && mono.block().channel(0)[0] == -1 &&
                 mono.block().channel(0)[2] == 32767.0 / 32768,
             "independent CAF fixture");
-    bytes[40] = 0; // bytesPerPacket no longer matches the packed frame.
-    // A truncated payload is always rejected without replacing the previous reader.
+    // A truncated payload is shortened to whole frames instead of being refused.
+    AudioFileReader shortened;
+    ok(shortened.open(std::make_shared<std::istringstream>(bytes.substr(0, bytes.size() - 1)),
+                      3));
+    require(shortened.info()->frames == 2, "truncated CAF payload keeps whole frames");
+    bytes[39] = 3; // bytesPerPacket no longer matches the packed frame.
+    // An inconsistent description is rejected without replacing the previous reader.
     require(
         independent.open(std::make_shared<std::istringstream>(bytes.substr(0, bytes.size() - 1)),
                          3) != Status::ok &&
@@ -237,6 +242,33 @@ void nativeLossy() {
         ok(reader.read(4096, out.block(), n));
         require(std::abs(reference - out.block().channel(0)[500]) < 1e-8,
                 "native codec exact decoded seek");
+        // A forward seek decodes on from the current position (no restart at frame 0)
+        // and lands on exactly the frames a fresh reader finds.
+        ok(reader.read(4096, out.block().subBlock(0, 512), n));
+        ok(reader.read(12288, out.block().subBlock(0, 512), n));
+        const auto forward = out.block().channel(0)[100];
+        AudioFileReader fresh;
+        ok(fresh.open(path, 8192));
+        ok(fresh.read(12288, out.block().subBlock(0, 512), n));
+        require(std::abs(forward - out.block().channel(0)[100]) < 1e-8,
+                "native forward seek exactness");
+        // A peak cache of a platform-decoded source loads from its stamp, with the same
+        // description a build produces.
+        auto peakPath = path;
+        peakPath += ".peaks";
+        Cleanup peakCleanup{peakPath};
+        WaveformPeakCache peaks, loaded;
+        ok(peaks.build(path, 256));
+        ok(peaks.save(peakPath));
+        ok(loaded.load(peakPath, path));
+        require(loaded.levels() == peaks.levels() &&
+                    loaded.info()->frames == peaks.info()->frames &&
+                    loaded.info()->channels == peaks.info()->channels &&
+                    loaded.info()->sampleRate == peaks.info()->sampleRate &&
+                    loaded.info()->formatName == peaks.info()->formatName &&
+                    loaded.info()->encoding == peaks.info()->encoding &&
+                    loaded.info()->metadataJson == peaks.info()->metadataJson,
+                "platform source peak cache reload");
         std::cout << "PASS platform codec " << extension << " encode/decode/tone/seek\n";
     }
 }

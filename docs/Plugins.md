@@ -87,25 +87,35 @@ CyDSP does not import or impose a GUI renderer.
 PluginWorker launches a caller-supplied executable. That executable recognizes
 --cydsp-worker <mapping> and calls runPluginWorker(mapping); the opt-in original
 fixture shows this entry point. The child loads/activates the plugin, owns its UI
-and serialized audio calls, and pumps Windows messages. Windows/POSIX memory maps
+and serialized audio calls, and pumps Windows messages. Audio (mailbox, heartbeat,
+start/process/stop) runs on a dedicated child thread; control calls, main-thread
+pumping and native messages stay on the child's main thread, so a modal editor loop
+no longer stops audio or the heartbeat. Windows/POSIX memory maps
 and child lifetime are original CyDSP code; Android requires an application service
 provider and returns unsupported_backend for this standalone worker.
 
 The protocol checks magic/version, native ABI/word size/record size, dimensions and
 all packet/payload bounds. It contains no cross-process C++ object or payload
-pointers. Client and worker must be built from the same protocol/target ABI.
+pointers. Client and worker must be built from the same protocol/target ABI
+(protocol version 2). The client keeps a private copy of the negotiated limits and
+never takes a bound from the shared header again, which the child can write.
 Memory is bounded by maximumChannelsPerDirection/events/payload/state bytes and
 an overall512 MiB limit. Only the child and owned mapping are cleaned up.
 The worker exits when shutdown is requested or its parent disappears.
 
 The audio client uses a nonblocking mailbox, prepared SIMD copies and a fixed
-block size equal to maximumFrames. It never waits, launches, performs OS polling
-or allocates. Pipeline latency is exactly one requested block when the child meets
+block size equal to maximumFrames. It never waits, launches or allocates. Its only
+system call is a non-blocking wake-up of the child's audio thread, made only while
+that thread sleeps. Invalid input events return their error without touching the
+outputs. An output event that cannot be translated is dropped and reported through
+pluginEventsDropped instead of failing the block. Pipeline latency is exactly one requested block when the child meets
 its deadline; add the reported plugin latency in the application's routing graph.
 The first block is silent. Missing/late replies produce silence/would_block;
 stale replies are discarded, preserving timeline sequence. Inspect
 PluginWorkerBlockResult. poll on control detects an exited child (and a stalled heartbeat) and reports
-disconnected/timed_out. Relaunch and reload a saved state to recover.
+disconnected/timed_out. Relaunch and reload a saved state to recover. poll also
+republishes plugin latency and tail when they change, and restart() serves a
+plugin's restart or port-change request.
 
 Control/state/editor calls require audio idle and may wait up to their timeout.
 A stuck owned child is terminated on control timeout/cleanup. Client control waits
@@ -225,6 +235,10 @@ set before each segment; mid-block transport events and tempo-increment ramps
 return unsupported_format. PDC latency uses an atomic published snapshot; tail
 duration remains unknown. Reset returns unsupported_format because @init may
 allocate or access files; stop/deactivate/reactivate is a control operation.
+Unlike upstream, the adapted runtime does not schedule @init when the transport
+starts: @init runs from control operations only, so a host that wants the restart
+behaviour reactivates the effect. @serialize data that was loaded, or captured at
+deactivate, is applied again after @init on activate.
 
 The version1 CyJSFX state envelope stores sliders (including sparse indices) and
 @serialize data with strict lengths, ranges and duplicate checks. The caller binds

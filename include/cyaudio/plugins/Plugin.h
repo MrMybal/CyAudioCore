@@ -7,6 +7,9 @@
 #include <string>
 #include <string_view>
 namespace cyaudio {
+namespace detail {
+struct PluginInstanceAccess; // Private door for the separate-process worker service.
+}
 enum class PluginFormat { clap, vst3, audioUnit, aax, lv2, jsfx, custom };
 enum class PluginWindowApi { win32, cocoa, x11, wayland };
 struct PluginWindow {
@@ -193,7 +196,9 @@ enum PluginRequest : std::uint32_t {
     pluginEditorClosed = 256,
     pluginEditorShow = 512,
     pluginEditorHide = 1024,
-    pluginEditorResize = 2048
+    pluginEditorResize = 2048,
+    // Output events the host could not translate or store were dropped; audio is kept.
+    pluginEventsDropped = 4096
 };
 struct PluginHostCallbacks {
     void* context = nullptr;
@@ -306,6 +311,7 @@ class PluginInstance {
     Status pumpMainThread(std::uint32_t& requests) noexcept;
     Status close() noexcept; // Main + audio idle, processing must already be stopped.
   private:
+    friend struct detail::PluginInstanceAccess;
     struct State;
     std::unique_ptr<State> state_;
     template <Sample T> Status processImpl(const PluginProcess<T>&) noexcept;

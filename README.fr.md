@@ -37,9 +37,9 @@ L’application choisit son interface et peut utiliser CyUI. Les buffers, types 
 
 ## Installation
 
-Compiler les archives pour l’ABI cible avec CMake 3.24+ et un compilateur C++20. CyAudioCore exige CyDSP 0.2.0. Voir le [guide de migration](docs/Migration.fr.md).
+Compiler les archives pour l’ABI cible avec CMake 3.24+ et un compilateur C++20. CyAudioCore exige CyDSP 0.3.0. Voir le [guide de migration](docs/Migration.fr.md).
 
-Révision CyDSP actuellement validée : `b973c1b`. Voir la [mise à jour de la dépendance et des archives](docs/CyDSPCurrent.fr.md).
+Version CyDSP actuellement validée : 0.3.0. Voir la [mise à jour de la dépendance et des archives](docs/CyDSPCurrent.fr.md).
 
 ```cmake
 find_package(CyAudioCore 0.1 CONFIG REQUIRED)

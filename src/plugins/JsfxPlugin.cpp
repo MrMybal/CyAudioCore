@@ -44,6 +44,11 @@ class JsfxBackend final : public PluginBackend {
     PluginPrepareOptions options_;
     PluginOutput output_;
     bool active_ = false;
+    DroppedEvents dropped_;
+    // Last @serialize payload: taken from loadState or captured by deactivate, and
+    // re-applied after the @init that every activation runs.
+    std::vector<std::uint8_t> serialized_;
+    bool hasSerialized_ = false;
     std::atomic<std::uint32_t> latency_{0}, latencyKnown_{0};
     void publishTiming() noexcept {
         auto d = ysfx_get_pdc_delay(fx_.value);
@@ -63,6 +68,17 @@ class JsfxBackend final : public PluginBackend {
             return Status::invalid_argument;
         ysfx_slider_set_value(fx_.value, e.id, e.value);
         return Status::ok;
+    }
+    // Re-reads the kept @serialize payload with the current slider values. Control only.
+    bool restoreSerialized() {
+        std::array<ysfx_state_slider_t, 64> sliders{};
+        std::uint32_t count = 0;
+        for (const auto& p : desc_.parameters)
+            sliders[count++] = {p.id, ysfx_slider_get_value(fx_.value, p.id)};
+        std::uint8_t none = 0;
+        ysfx_state_t s{sliders.data(), count, serialized_.empty() ? &none : serialized_.data(),
+                       serialized_.size()};
+        return ysfx_load_state(fx_.value, &s);
     }
     template <Sample T> Status run(const PluginProcess<T>& call) noexcept {
         output_.reset();
@@ -89,13 +105,11 @@ class JsfxBackend final : public PluginBackend {
                         return Status::unsupported_format;
                 }
             }
+        // A rejected UI edit is dropped and counted; it must never stay at the queue
+        // head, where it would fail this and every later block.
         while (const auto* edit = uiEdits_.peek()) {
-            auto r = set(*edit);
-            if (r != Status::ok)
-                return r;
-            r = output_.add(*edit);
-            if (r != Status::ok)
-                return r;
+            if (set(*edit) != Status::ok || output_.add(*edit) != Status::ok)
+                dropped_.add();
             uiEdits_.discard();
         }
         auto time = [&](std::uint32_t frame) {
@@ -188,16 +202,18 @@ class JsfxBackend final : public PluginBackend {
             while (ysfx_receive_midi(fx_.value, &midi)) {
                 if (!call.outputEvents)
                     continue;
-                if (midi.offset >= end - begin || midi.bus >= 16 || !midi.size)
-                    return Status::invalid_argument;
+                // Script output outside this segment or bus range is dropped, not fatal.
+                if (midi.offset >= end - begin || midi.bus >= 16 || !midi.size) {
+                    dropped_.add();
+                    continue;
+                }
                 PluginEvent e;
                 e.kind = midi.data[0] == 0xf0 ? PluginEventKind::sysex : PluginEventKind::midi1;
                 e.frame = begin + midi.offset;
                 e.port = std::int16_t(midi.bus);
                 e.bytes = {midi.data, midi.size};
-                auto r = output_.add(e);
-                if (r != Status::ok)
-                    return r;
+                if (output_.add(e) != Status::ok)
+                    dropped_.add();
             }
             auto automated = ysfx_fetch_slider_automations(fx_.value);
             for (std::uint32_t id = 0; id < 64; ++id)
@@ -208,15 +224,15 @@ class JsfxBackend final : public PluginBackend {
                         e.frame = end - 1;
                         e.id = id;
                         e.value = ysfx_slider_get_value(fx_.value, id);
-                        auto r = output_.add(e);
-                        if (r != Status::ok)
-                            return r;
+                        if (output_.add(e) != Status::ok)
+                            dropped_.add();
                     }
                 }
             begin = end;
         }
         publishTiming();
-        return output_.finish(call.outputEvents);
+        dropped_.add(output_.finish(call.outputEvents));
+        return Status::ok;
     }
 
   public:
@@ -283,18 +299,22 @@ class JsfxBackend final : public PluginBackend {
     }
     Status activate(const PluginPrepareOptions& o) noexcept override {
         try {
-            output_.prepare(o.maximumEvents, 16 * 1024 * 1024);
+            // One segment of script MIDI output cannot exceed the script MIDI capacity.
+            const auto midiBytes =
+                std::min<std::uint32_t>(16 * 1024 * 1024, o.maximumEvents * 1024);
+            output_.prepare(o.maximumEvents, midiBytes);
             options_ = o;
             ysfx_set_sample_rate(fx_.value, o.sampleRate);
             ysfx_set_block_size(fx_.value, o.maximumFrames);
-            ysfx_set_midi_capacity(
-                fx_.value, std::min<std::uint32_t>(16 * 1024 * 1024, o.maximumEvents * 1024),
-                false);
+            ysfx_set_midi_capacity(fx_.value, midiBytes, false);
             // Retain all declared local VM memory before audio; scripts may still allocate
             // strings/files/global memory, which remains foreign-code behavior.
             if (!jsfxPrepareMemory(fx_.value))
                 return Status::allocation_failed;
             ysfx_init(fx_.value);
+            // @init has just reset the script; put the restored/captured state back.
+            if (hasSerialized_ && !restoreSerialized())
+                return Status::io_error;
             publishTiming();
             active_ = true;
             return Status::ok;
@@ -303,6 +323,20 @@ class JsfxBackend final : public PluginBackend {
         }
     }
     Status deactivate() noexcept override {
+        if (active_) {
+            // Keep the script state across the @init of the next activation.
+            try {
+                std::unique_ptr<ysfx_state_t, decltype(&ysfx_state_free)> s(
+                    ysfx_save_state(fx_.value), ysfx_state_free);
+                if (!s)
+                    return Status::io_error;
+                std::vector<std::uint8_t> next(s->data, s->data + s->data_size);
+                serialized_.swap(next);
+                hasSerialized_ = true;
+            } catch (...) {
+                return Status::allocation_failed;
+            }
+        }
         active_ = false;
         return Status::ok;
     }
@@ -402,7 +436,12 @@ class JsfxBackend final : public PluginBackend {
         }
         ysfx_state_t s{sliders.data(), n, const_cast<std::uint8_t*>(b.data() + 16 + n * 12), len};
         try {
-            return ysfx_load_state(fx_.value, &s) ? Status::ok : Status::io_error;
+            std::vector<std::uint8_t> kept(s.data, s.data + len);
+            if (!ysfx_load_state(fx_.value, &s))
+                return Status::io_error;
+            serialized_.swap(kept);
+            hasSerialized_ = true;
+            return Status::ok;
         } catch (...) {
             return Status::allocation_failed;
         }
@@ -454,28 +493,39 @@ class JsfxBackend final : public PluginBackend {
     void closeEditor() noexcept override {
         editor_.reset();
     }
+#endif
     std::uint32_t pumpMainThread() noexcept override {
+        const auto flags = dropped_.take();
+#if defined(_WIN32)
         if (!editor_)
-            return 0;
+            return flags;
         try {
             editor_->pump();
             auto changed = ysfx_fetch_slider_automations(fx_.value);
             for (std::uint32_t id = 0; id < 64; ++id)
                 if ((changed >> id) & 1u) {
+                    // @gfx may automate an undeclared slider or leave a declared one out
+                    // of range: hand audio only an edit it can apply.
+                    const auto* p = parameter(id);
+                    const auto value = ysfx_slider_get_value(fx_.value, id);
+                    if (!p || !isFinite(value))
+                        continue;
                     PluginEvent e;
                     e.kind = PluginEventKind::parameterValue;
                     e.id = id;
-                    e.value = ysfx_slider_get_value(fx_.value, id);
+                    e.value = std::clamp(value, p->minimum, p->maximum);
                     e.flags = 1;
                     if (uiEdits_.push(e) && callbacks_.edited)
                         callbacks_.edited(callbacks_.context, e);
                 }
-            return changed ? pluginStateDirty : 0;
+            return flags | (changed ? std::uint32_t(pluginStateDirty) : 0u);
         } catch (...) {
-            return pluginEditorHide;
+            return flags | pluginEditorHide;
         }
-    }
+#else
+        return flags;
 #endif
+    }
 };
 class JsfxProvider final : public PluginProvider {
   public:

@@ -24,12 +24,18 @@ class MidiEventCollector {
     Status pushMidi(std::uint64_t nanoseconds, std::span<const std::uint8_t>) noexcept;
     Status pushUmp(std::uint64_t nanoseconds, const UmpPacket&) noexcept;
     // Appends to prepared output buffers. Future events remain queued; stable
-    // arrival ordering resolves equal timestamps. Output saturation retains the event.
+    // arrival ordering resolves equal timestamps. Output saturation retains the event
+    // (update_queue_full). An event larger than the whole MidiBuffer can never be delivered:
+    // it is dropped and counted, and block_too_large is returned after the rest was collected.
     Status collect(const AudioClockAnchor&, std::uint32_t frames, MidiBuffer&, UmpBuffer&) noexcept;
+    // Consumer. Takes the arrival/invalidation snapshot the next collect will use and returns
+    // its epoch, so an epoch change can be handled before the first event of the new epoch.
+    std::uint32_t syncEpoch() noexcept;
     void invalidate() noexcept; // Producer invalidates old connection events.
     void reset() noexcept;      // Both owners idle; retains storage.
     [[nodiscard]] std::uint32_t overflows() const noexcept;
     [[nodiscard]] std::uint32_t lateMessages() const noexcept;
+    [[nodiscard]] std::uint32_t oversizedMessages() const noexcept;
 
   private:
     struct State;

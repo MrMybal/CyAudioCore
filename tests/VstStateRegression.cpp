@@ -34,16 +34,19 @@ void vstStateRegression(const std::filesystem::path& directory) {
  std::unique_ptr<PluginProvider> provider;
  require(createPluginProvider(PluginFormat::vst3,provider)==Status::ok);
  const auto path=std::filesystem::absolute(directory/"cyaudio_state_fixture.vst3");
- std::vector<PluginDescriptor> descriptors; require(provider->scan(path,descriptors)==Status::ok && descriptors.size()==5);
- for(unsigned mode=0;mode<5;++mode) {
+ std::vector<PluginDescriptor> descriptors; require(provider->scan(path,descriptors)==Status::ok && descriptors.size()==7);
+ // Modes 0-4: controller getState variants. Mode 5: controller setComponentState answers
+ // kNotImplemented (SDK default). Mode 6: component getState answers kNotImplemented.
+ for(unsigned mode=0;mode<7;++mode) {
+  const bool good=mode<2 || mode>=5;
   PluginInstance instance;require(provider->create(path,descriptors[mode].id,{},instance)==Status::ok);
   std::vector<std::uint8_t> state{0xa5};
   const auto status=instance.saveState(state,64);
-  if(mode<2) {
-   require(status==Status::ok && state.size()==(mode==0?32:40));
+  if(good) {
+   require(status==Status::ok && state.size()==((mode==0 || mode==6)?32:40));
    require(instance.loadState(state)==Status::ok);
    const auto saved=state;
-   require(instance.saveState(state,31)==Status::block_too_large && state==saved);
+   require(instance.saveState(state,mode==6?24:31)==Status::block_too_large && state==saved);
    auto malformed=state;malformed[16]=255;
    require(instance.loadState(malformed)==Status::invalid_argument);
   } else require(status==(mode==4?Status::block_too_large:Status::io_error) && state==std::vector<std::uint8_t>{0xa5});
@@ -59,7 +62,7 @@ void vstStateRegression(const std::filesystem::path& directory) {
   );
   require(worker.launch(executable,PluginFormat::vst3,path,descriptors[mode].id,options)==Status::ok);
   state={0xa5}; const auto remote=worker.saveState(state);
-  if(mode<2)require(remote==Status::ok && worker.loadState(state)==Status::ok);
+  if(good)require(remote==Status::ok && worker.loadState(state)==Status::ok);
   else require(remote==(mode==4?Status::block_too_large:Status::io_error) && state==std::vector<std::uint8_t>{0xa5});
   worker.close();
 #endif

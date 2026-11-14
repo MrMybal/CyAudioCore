@@ -597,36 +597,43 @@ Status CiPropertyClient::process(const CiPropertyMessage& m, std::uint64_t now) 
     if (p == s.pending.end())
         return Status::ok;
     auto& e = s.entries[p->entry];
-    unsigned code = 0;
-    const auto status = h.find("status");
-    if (h.firstKey() != "status" || !status || status->unsignedInteger(code) != Status::ok)
-        return Status::invalid_argument;
-    if (code != 200 && code != 202) {
+    // The transport has already retired this request: every exit below must complete the
+    // pending entry, or a later request reusing the ID would be answered in its name.
+    auto finish = [&](unsigned failure, Status result) noexcept {
         if (p->sub != State::none)
             s.subChanged(s.subscriptions[p->sub], false);
         if (p->generation == e.generation)
             e.refresh = false;
-        s.complete(*p, code);
-        return Status::ok;
-    }
+        s.complete(*p, failure);
+        return result;
+    };
+    unsigned code = 0;
+    const auto status = h.find("status");
+    if (h.firstKey() != "status" || !status || status->unsignedInteger(code) != Status::ok)
+        return finish(400, Status::invalid_argument);
+    if (code != 200 && code != 202)
+        return finish(code, Status::ok);
     if (p->op == State::Operation::get && code == 200) {
         std::span<const std::uint8_t> data;
         std::string_view media;
         std::array<char, 75> mediaBuffer{};
         const auto result = s.decode(m, h, data, media, mediaBuffer);
         if (result != Status::ok)
-            return result;
+            return finish(result == Status::block_too_large      ? 413
+                          : result == Status::unsupported_format ? 415
+                                                                 : 400,
+                          result);
         if (!e.query().mediaType.empty() && e.query().mediaType != media)
-            return Status::unsupported_format;
+            return finish(415, Status::unsupported_format);
         unsigned cacheTime = 0;
         if (const auto value = h.find("cacheTime");
             value && value->unsignedInteger(cacheTime) != Status::ok)
-            return Status::invalid_argument;
+            return finish(400, Status::invalid_argument);
         std::optional<std::uint32_t> total;
         if (const auto value = h.find("totalCount")) {
             unsigned n;
             if (value->unsignedInteger(n) != Status::ok)
-                return Status::invalid_argument;
+                return finish(400, Status::invalid_argument);
             total = n;
         }
         if (p->generation == e.generation) {
@@ -640,11 +647,11 @@ Status CiPropertyClient::process(const CiPropertyMessage& m, std::uint64_t now) 
         std::array<char, 8> buffer{};
         std::string_view id;
         if (!m.data.empty() || !field(h, "subscribeId", buffer, id) || !subscriptionId(id))
-            return Status::invalid_argument;
+            return finish(400, Status::invalid_argument);
         for (const auto& sub : s.subscriptions)
             if (sub.active && s.entries[sub.entry].peer == m.source &&
                 view(sub.id, sub.idSize) == id)
-                return Status::invalid_argument;
+                return finish(400, Status::invalid_argument);
         auto& sub = s.subscriptions[p->sub];
         copy(id, sub.id, sub.idSize);
         s.subChanged(sub, true);
@@ -653,12 +660,12 @@ Status CiPropertyClient::process(const CiPropertyMessage& m, std::uint64_t now) 
         ++e.generation;
     } else if (p->op == State::Operation::end) {
         if (!m.data.empty())
-            return Status::invalid_argument;
+            return finish(400, Status::invalid_argument);
         s.subChanged(s.subscriptions[p->sub], false);
         e.refresh = false;
     } else if (p->op == State::Operation::set) {
         if (!m.data.empty())
-            return Status::invalid_argument;
+            return finish(400, Status::invalid_argument);
         if (p->generation == e.generation) {
             e.fresh = false;
             if (e.subscribed)

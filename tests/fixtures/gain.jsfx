@@ -15,6 +15,8 @@ gain=slider1;
 while(midirecv(offset,msg1,msg2,msg3)) (
   midisend(offset,msg1,msg2,msg3);
 );
+// Regression trigger: an event placed after the end of the block.
+slider8==0.5 ? midisend(samplesblock+5,$x90,60,100);
 @sample
 spl0=spl0*gain+slider8;
 spl1=spl1*gain+slider8;
@@ -29,4 +31,11 @@ key=gfx_getchar();
 key==97 ? (
   slider8=0.75;
   slider_automate(slider8);
+);
+// Regression trigger: out-of-range and undeclared slider automation from @gfx.
+key==98 ? (
+  slider8=5;
+  slider_automate(slider8);
+  slider3=1;
+  slider_automate(slider3);
 );

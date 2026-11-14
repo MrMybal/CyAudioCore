@@ -98,6 +98,59 @@ bool UmpPacket::valid() const noexcept {
     }
     return true;
 }
+bool umpAcceptReceived(UmpPacket& p) noexcept {
+    if (!p.count || p.count != umpWordCount(p.type()))
+        return false;
+    const auto clear = [&](unsigned n) noexcept {
+        p.words[n / 4] &= ~(std::uint32_t{0xff} << (24 - 8 * (n % 4)));
+    };
+    switch (p.type()) {
+    case 1: { // System common/real time: bytes after the message's own data.
+        const auto status = byte(p, 1);
+        const unsigned n = status == 0xf2 ? 3 : status == 0xf1 || status == 0xf3 ? 2 : 1;
+        for (unsigned i = n; i < 3; ++i)
+            clear(1 + i);
+        break;
+    }
+    case 2: // Program change and channel pressure carry one data byte.
+        if ((byte(p, 1) & 0xe0) == 0xc0)
+            clear(3);
+        break;
+    case 3: { // SysEx7: bytes beyond the declared count.
+        const auto n = (p.words[0] >> 16) & 15;
+        for (unsigned i = n; i < 6; ++i)
+            clear(2 + i);
+        break;
+    }
+    case 4: {
+        const auto s = p.status();
+        if (s == 6 || s == 10 || s == 11)
+            clear(3);
+        else if (s == 15) { // Per-note management: two option flags, no data word.
+            p.words[0] &= ~std::uint32_t{0xfc};
+            p.words[1] = 0;
+        } else if (s == 12) { // Program change: one option flag, reserved bytes around it.
+            clear(2);
+            p.words[0] &= ~std::uint32_t{0xfe};
+            clear(5);
+        } else if (s == 13 || s == 14) {
+            clear(2);
+            clear(3);
+        }
+        break;
+    }
+    case 5: // SysEx8: bytes beyond the declared count (which includes the stream ID).
+        if (p.status() < 4) {
+            const auto n = (p.words[0] >> 16) & 15;
+            for (unsigned i = n + 2; i < 16; ++i)
+                clear(i);
+        }
+        break;
+    default:
+        break;
+    }
+    return p.valid();
+}
 Status UmpPacket::toBytes(std::span<std::uint8_t> out, std::size_t& n) const noexcept {
     n = count * 4;
     if (!valid())
@@ -120,7 +173,7 @@ Status UmpStreamParser::feed(std::span<const std::uint32_t> words, UmpCallback c
         }
         packet_.words[have_++] = word;
         if (have_ == packet_.count) {
-            if (packet_.valid())
+            if (umpAcceptReceived(packet_))
                 callback(context, packet_);
             else
                 result = Status::invalid_argument;
@@ -245,6 +298,11 @@ Status midi1ToMidi2(const UmpPacket& p, UmpPacket& out) noexcept {
         result = umpPressure(g, c, midiScale7To32(d2), d1);
         break;
     case 11:
+        // Bank Select, Data Entry/Increment/Decrement and (N)RPN selection have no MIDI 2
+        // controller form: they become atomic bank/parameter messages, which needs the
+        // running state a stateless translator does not have.
+        if (d1 == 0 || d1 == 6 || d1 == 32 || d1 == 38 || (d1 >= 96 && d1 <= 101))
+            return Status::unsupported_format;
         result = umpController(g, c, d1, midiScale7To32(d2));
         break;
     case 12:
@@ -342,10 +400,11 @@ Status UmpSysExAssembler::prepare(std::size_t n) noexcept {
         return Status::invalid_argument;
     }
 }
-Status UmpSysExAssembler::append(const UmpPacket& p) noexcept {
+Status UmpSysExAssembler::append(const UmpPacket& received) noexcept {
     if (storage_.empty())
         return Status::not_prepared;
-    if (!p.valid())
+    auto p = received;
+    if (!umpAcceptReceived(p))
         return Status::invalid_argument;
     if (p.type() != 3 && p.type() != 5)
         return Status::unsupported_format;

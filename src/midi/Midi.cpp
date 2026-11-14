@@ -99,6 +99,9 @@ Status MidiBuffer::add(std::uint32_t frame, std::span<const std::uint8_t> data) 
         return Status::not_prepared;
     if (!MidiMessageView(data).valid())
         return Status::invalid_argument;
+    // A message larger than the whole buffer can never fit: not a temporary saturation.
+    if (data.size() > bytes_.size())
+        return Status::block_too_large;
     if (count_ == entries_.size() || data.size() > bytes_.size() - used_)
         return Status::update_queue_full;
     // Capture before moving metadata; supplied bytes may borrow another event from this buffer.
@@ -367,10 +370,12 @@ Status MidiFile::parse(std::span<const std::uint8_t> bytes, std::size_t max) noe
                     if (status >= 0xf0)
                         return Status::invalid_argument;
                     running = status;
-                    e.data.push_back(status);
                     const auto size = length(status) - 1;
                     if (!r.take(size, skip))
                         return Status::invalid_argument;
+                    // Sized once: push_back then insert reallocated every channel message.
+                    e.data.reserve(size + 1);
+                    e.data.push_back(status);
                     e.data.insert(e.data.end(), skip.begin(), skip.end());
                     if (!MidiMessageView(e.data).valid())
                         return Status::invalid_argument;
@@ -464,11 +469,48 @@ Status MidiFile::tickToSeconds(std::uint64_t tick, double& seconds,
             static_cast<double>(tick) / ((fps == 29 ? 30000.0 / 1001 : fps) * (division & 255));
         return Status::ok;
     }
-    // No temporary tempo vector: walk all tracks at each tempo boundary, including equal-tick
-    // order.
     std::uint64_t previous = 0;
     double tempo = 500000, elapsed = 0;
     const auto first = format == 2 ? track : 0, last = format == 2 ? track + 1 : tracks.size();
+    // Usual layout: every tempo event in one track, in tick order. One pass over the events,
+    // still without a temporary tempo vector.
+    constexpr auto none = std::numeric_limits<std::size_t>::max();
+    std::size_t tempoTrack = none;
+    std::uint64_t lastTempoTick = 0;
+    bool ordered = true;
+    for (std::size_t t = first; t < last && ordered; ++t)
+        for (const auto& e : tracks[t]) {
+            if (e.kind != MidiFileEventKind::meta || e.type != 0x51)
+                continue;
+            if ((tempoTrack != none && tempoTrack != t) || e.tick < lastTempoTick) {
+                ordered = false;
+                break;
+            }
+            tempoTrack = t;
+            lastTempoTick = e.tick;
+        }
+    if (ordered) {
+        if (tempoTrack != none)
+            for (const auto& e : tracks[tempoTrack]) {
+                if (e.kind != MidiFileEventKind::meta || e.type != 0x51)
+                    continue;
+                if (e.tick > tick)
+                    break;
+                if (e.data.size() != 3)
+                    return Status::invalid_argument;
+                const auto value =
+                    (unsigned(e.data[0]) << 16) | (unsigned(e.data[1]) << 8) | e.data[2];
+                if (!value)
+                    return Status::invalid_argument;
+                elapsed += static_cast<double>(e.tick - previous) * tempo / (1e6 * division);
+                previous = e.tick;
+                tempo = value;
+            }
+        seconds = elapsed + static_cast<double>(tick - previous) * tempo / (1e6 * division);
+        return Status::ok;
+    }
+    // Tempo events spread over several tracks or out of order: walk all tracks at each tempo
+    // boundary, including equal-tick order.
     std::size_t selectedTrack = 0, selectedEvent = 0;
     bool haveSelected = false;
     for (;;) {
@@ -505,6 +547,66 @@ Status MidiFile::tickToSeconds(std::uint64_t tick, double& seconds,
         haveSelected = true;
     }
     seconds = elapsed + static_cast<double>(tick - previous) * tempo / (1e6 * division);
+    return Status::ok;
+}
+Status MidiTempoMap::prepare(const MidiFile& file, std::size_t track) noexcept {
+    if (file.format > 2 || file.tracks.empty() || track >= file.tracks.size() ||
+        !divisionValid(file.division))
+        return Status::invalid_argument;
+    try {
+        std::vector<Point> next;
+        double rate = 0;
+        if (file.division & 0x8000) {
+            const unsigned fps = 256 - (file.division >> 8);
+            rate = (fps == 29 ? 30000.0 / 1001 : fps) * (file.division & 255);
+        } else {
+            const auto first = file.format == 2 ? track : 0,
+                       last = file.format == 2 ? track + 1 : file.tracks.size();
+            next.push_back({0, 0, 500000});
+            for (std::size_t t = first; t < last; ++t)
+                for (const auto& e : file.tracks[t]) {
+                    if (e.kind != MidiFileEventKind::meta || e.type != 0x51)
+                        continue;
+                    if (e.data.size() != 3)
+                        return Status::invalid_argument;
+                    const auto value =
+                        (unsigned(e.data[0]) << 16) | (unsigned(e.data[1]) << 8) | e.data[2];
+                    if (!value)
+                        return Status::invalid_argument;
+                    next.push_back({e.tick, 0, static_cast<double>(value)});
+                }
+            // Collected in track/event order: a stable sort keeps that order at equal ticks.
+            std::stable_sort(next.begin() + 1, next.end(),
+                             [](const Point& a, const Point& b) { return a.tick < b.tick; });
+            for (std::size_t i = 1; i < next.size(); ++i)
+                next[i].seconds =
+                    next[i - 1].seconds + static_cast<double>(next[i].tick - next[i - 1].tick) *
+                                              next[i - 1].tempo / (1e6 * file.division);
+        }
+        points_.swap(next);
+        rate_ = rate;
+        division_ = file.division;
+        return Status::ok;
+    } catch (const std::bad_alloc&) {
+        return Status::allocation_failed;
+    } catch (const std::length_error&) {
+        return Status::invalid_argument;
+    }
+}
+Status MidiTempoMap::tickToSeconds(std::uint64_t tick, double& seconds) const noexcept {
+    if (!division_)
+        return Status::not_prepared;
+    if (points_.empty()) {
+        seconds = static_cast<double>(tick) / rate_;
+        return Status::ok;
+    }
+    // points_[0] is the default tempo at tick 0, so a predecessor always exists; the last
+    // of several points on one tick is the tempo in force after it.
+    const auto after =
+        std::upper_bound(points_.begin(), points_.end(), tick,
+                         [](std::uint64_t value, const Point& p) { return value < p.tick; });
+    const auto& p = *(after - 1);
+    seconds = p.seconds + static_cast<double>(tick - p.tick) * p.tempo / (1e6 * division_);
     return Status::ok;
 }
 } // namespace cyaudio

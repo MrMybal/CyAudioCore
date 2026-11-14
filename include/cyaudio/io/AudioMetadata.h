@@ -38,6 +38,8 @@ struct AudioMetadata {
 };
 // Control/worker operations. WAV cue/adtl/smpl/INFO supported; empty metadata succeeds.
 // set preserves unrelated chunks and unknown LIST children, replacing managed values.
+// It writes a single adtl and a single INFO list (managed children first, preserved
+// ones after); list types other than those two are kept as opaque data.
 // All in-memory outputs are unchanged on failure; no sample data is accessed.
 Status getAudioMetadata(const AudioFileInfo&, AudioMetadata&) noexcept;
 Status setAudioMetadata(AudioFileInfo&, const AudioMetadata&) noexcept;

@@ -83,6 +83,8 @@ struct AudioDeviceConfig {
     std::size_t inputChannels = 0, outputChannels = 2, maxCallbackFrames = 512;
     AudioAccess access = AudioAccess::shared;
     std::vector<unsigned> inputChannelMap{}, outputChannelMap{};
+    // Indices of the device's own (native) channels, in application order; any subset is
+    // valid. An index beyond the device is channel_mismatch. Exclusive with channel maps.
     std::vector<unsigned> activeInputChannels{}, activeOutputChannels{};
     std::uint32_t generation = 1;
     bool diagnostics = false;

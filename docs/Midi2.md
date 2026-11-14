@@ -52,6 +52,12 @@ and fragmented on the worker. Real-time code must handle update_queue_full witho
 spinning. Success acknowledges queuing, not physical delivery. Native errors are
 available through lastError; incoming overflow/malformed packets increment
 `droppedPackets`. The OS backend itself is not claimed allocation-free.
+The explicit loopback applies back-pressure instead: a full incoming queue keeps
+packets with the worker, so a send-only endpoint that is never read ends up
+returning update_queue_full. The worker keeps draining while a queue still has
+work and otherwise waits on a high-resolution timer on Windows. Received packets
+pass through `umpAcceptReceived`, which ignores non-zero reserved fields; senders
+stay strict through `UmpPacket::valid`.
 
 Timestamps are nanoseconds in the same steady-clock domain as `midi2TimestampNow`;
 zero means immediate. Each producer is FIFO, and future timestamps should be
@@ -74,7 +80,8 @@ MidiCiDevice per group.
 
 `prepare` creates bounded peer, profile, transaction and payload storage; it may
 allocate and obtain a random session seed. All subsequent processing, poll and
-reset retain that memory. The owner serializes CI calls and supplies monotonic
+reset retain that memory. A full peer table evicts the least recently seen peer,
+reports its removal and still answers Discovery. The owner serializes CI calls and supplies monotonic
 milliseconds. `CiCallbacks::send` must enqueue/copy the borrowed payload and return
 Status; it must not synchronously recurse into this device. Other callback views
 are borrowed only until return. Do not reprepare, move or destroy CI inside a

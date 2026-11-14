@@ -86,14 +86,15 @@ template <Sample T> struct Synthesizer<T>::State {
                 chosen = i;
         }
         auto& v = *chosen;
-        const auto held = v.last;
+        // Only the prepared output channels carry steal-fade history.
+        const auto used = static_cast<std::ptrdiff_t>(spec.channels);
         if (v.info.active) {
             stop(v);
             ++stolen;
-            v.stolen = held;
+            std::copy_n(v.last.begin(), used, v.stolen.begin());
             v.fade = p.stealFadeFrames;
         } else {
-            v.stolen.fill(0);
+            std::fill_n(v.stolen.begin(), used, 0.0);
             v.fade = 0;
         }
         const auto& c = channels[group * 16 + channel - 1];
@@ -118,7 +119,7 @@ template <Sample T> struct Synthesizer<T>::State {
         v.pitch = pitch;
         v.perNoteBend = 0;
         v.baseNote = base >= 0 ? base : c.tuned[note] ? c.tuning[note] : note;
-        v.last.fill(0);
+        std::fill_n(v.last.begin(), used, 0.0);
         v.oscillator.reset();
         v.oscillator.setWaveform(p.waveform);
         v.envelope.reset();
@@ -338,40 +339,35 @@ template <Sample T> struct Synthesizer<T>::State {
                     if (status != Status::ok)
                         return status;
                 } else {
-                    const auto data = sample->samples();
                     const auto ratio = std::min(
                         1e6, sample->sampleRate() / spec.sampleRate *
                                  std::exp2((v.baseNote - static_cast<double>(sample->rootNote()) +
                                             v.pitch + v.perNoteBend * c.perNoteRange +
                                             c.bend * c.range + c.tuningOffset) /
                                            12));
-                    for (std::size_t i = 0; i < count; ++i) {
-                        const auto loopEnd = sample->loopEnd();
-                        if (loopEnd && v.position >= static_cast<double>(loopEnd))
-                            v.position = double(sample->loopStart() + sample->loopCrossfade()) +
-                                         std::fmod(v.position - double(loopEnd),
-                                                   double(loopEnd - sample->loopStart() -
-                                                          sample->loopCrossfade()));
-                        for (std::size_t ch = 0; ch < wave.channels(); ++ch) {
-                            T value{};
-                            if (v.position < static_cast<double>(data.frames())) {
-                                value = sample->value(std::min(ch, data.channels() - 1), v.position,
-                                                      ratio, p.sampleInterpolation);
-                            } else if (v.keyDown) {
-                                v.envelope.noteOff();
-                                v.keyDown = false;
-                                v.info.releasing = true;
-                            }
-                            wave.channel(ch)[i] = value;
-                        }
-                        env.channel(0)[i] = static_cast<T>(v.envelope.next());
-                        v.position += ratio;
+                    // CyDSP selects the mip level once for this constant-ratio span and
+                    // returns the same samples as the former per-frame lookups.
+                    std::size_t inside = count;
+                    if (ratio > 0) {
+                        const auto status = sample->render(v.position, ratio,
+                                                           p.sampleInterpolation, wave, inside);
+                        if (status != Status::ok)
+                            return status;
+                    } else
+                        for (std::size_t ch = 0; ch < wave.channels(); ++ch)
+                            ops.fill(wave.channel(ch), T{});
+                    // The first frame past the end releases the key before its envelope value.
+                    const auto envelope = env.channel(0);
+                    v.envelope.process(envelope.first(inside));
+                    if (inside < count && v.keyDown) {
+                        v.envelope.noteOff();
+                        v.keyDown = false;
+                        v.info.releasing = true;
                     }
+                    v.envelope.process(envelope.subspan(inside));
                 }
                 if (!sample)
-                    for (std::size_t i = 0; i < count; ++i) {
-                        env.channel(0)[i] = static_cast<T>(v.envelope.next());
-                    }
+                    v.envelope.process(env.channel(0));
                 if (sample) {
                     const auto status = sampleMatrix.process(wave, mono.block(count));
                     if (status != Status::ok)

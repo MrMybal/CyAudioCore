@@ -21,7 +21,8 @@ Value json(std::string_view text) {
         else if(c=='}'||c==']'){check(depth!=0);--depth;}
     }
     check(!string&&depth==0);
-    return text.empty()?choc::value::createEmptyArray():choc::json::parse(text);
+    // "null" is what older readers reported for a file without metadata.
+    return text.empty()||text=="null"?choc::value::createEmptyArray():choc::json::parse(text);
 }
 std::uint64_t number(View v,std::uint64_t maximum=UINT32_MAX) {
     check(v.isInt());const auto n=v.get<std::int64_t>();check(n>=0&&std::uint64_t(n)<=maximum);return std::uint64_t(n);
@@ -75,10 +76,10 @@ bool valid(const AudioMetadata& m) {
     if(m.version!=1||m.container!="WAV"||m.markers.size()>65536||m.regions.size()>65536||
        m.loops.size()>65536||m.tags.size()>65536||m.unityNote>127||m.preservedNative.size()>limit)return false;
     auto good=[](const std::string& s){return s.size()<=1048576&&s.find('\0')==std::string::npos;};
-    for(std::size_t i=0;i<m.markers.size();++i){
-        auto& v=m.markers[i];if(v.frame>UINT32_MAX||!good(v.name)||!good(v.note))return false;
-        for(std::size_t j=0;j<i;++j)if(m.markers[j].id==v.id)return false;
-    }
+    std::vector<std::uint32_t> ids;ids.reserve(m.markers.size());
+    for(auto& v:m.markers){if(v.frame>UINT32_MAX||!good(v.name)||!good(v.note))return false;ids.push_back(v.id);}
+    std::sort(ids.begin(),ids.end()); // Unique marker ids, without a quadratic scan.
+    if(std::adjacent_find(ids.begin(),ids.end())!=ids.end())return false;
     for(auto& v:m.regions)if(v.lengthFrames>UINT32_MAX||!good(v.text))return false;
     for(auto& v:m.loops)if(v.startFrame>=v.endFrame||v.startFrame>UINT32_MAX||v.endFrame>UINT64_C(0x100000000)||
         unsigned(v.mode)>2)return false;
@@ -86,17 +87,25 @@ bool valid(const AudioMetadata& m) {
     return true;
 }
 void lists(View root,AudioMetadata& m) {
+    // First marker of each id, sorted once: labels are attached without a scan per label.
+    std::vector<std::pair<std::uint32_t,std::size_t>> index;index.reserve(m.markers.size());
+    for(std::size_t i=0;i<m.markers.size();++i)index.push_back({m.markers[i].id,i});
+    std::sort(index.begin(),index.end());
     for(auto chunk:root)if(fieldText(chunk,"type")=="LIST") {
         const auto subtype=fieldText(chunk,"listType");
+        const bool isInfo=subtype=="INFO"||subtype=="info",isAdtl=subtype=="adtl";
         if(chunk["data"].isString()) {
+            // Only the two standardized lists have a chunk structure this code interprets;
+            // any other list type is opaque preserved data.
+            if(!isInfo&&!isAdtl)continue;
             const auto bytes=decode(chunk["data"]);
             children(bytes,[&](auto tag,auto payload,auto) {
-                if((subtype=="INFO"||subtype=="info")&&canonical(four(tag))!=four(tag))m.tags.push_back({canonical(four(tag)),terminated(payload,0)});
-                if(subtype!="adtl")return;
+                if(isInfo&&canonical(four(tag))!=four(tag))m.tags.push_back({canonical(four(tag)),terminated(payload,0)});
+                if(!isAdtl)return;
                 if(tag==0x6c62616c||tag==0x65746f6e) { // labl/note
                     check(payload.size()>=4);const auto id=read(payload,0);
-                    auto i=std::find_if(m.markers.begin(),m.markers.end(),[&](const auto& v){return v.id==id;});
-                    if(i!=m.markers.end())(tag==0x6c62616c?i->name:i->note)=terminated(payload,4);
+                    auto i=std::lower_bound(index.begin(),index.end(),std::pair<std::uint32_t,std::size_t>{id,0});
+                    if(i!=index.end()&&i->first==id){auto& marker=m.markers[i->second];(tag==0x6c62616c?marker.name:marker.note)=terminated(payload,4);}
                 } else if(tag==0x7478746c) { // ltxt
                     check(payload.size()>=20);
                     m.regions.push_back({read(payload,0),read(payload,4),read(payload,8),
@@ -104,7 +113,7 @@ void lists(View root,AudioMetadata& m) {
                         std::uint16_t(read(payload,16,2)),std::uint16_t(read(payload,18,2)),terminated(payload,20)});
                 }
             });
-        } else if((subtype.empty()||subtype=="INFO"||subtype=="info")&&chunk["items"].isArray()) {
+        } else if((subtype.empty()||isInfo)&&chunk["items"].isArray()) {
             for(auto item:chunk["items"])m.tags.push_back({canonical(fieldText(item,"type")),fieldText(item,"value")});
         }
     }
@@ -112,6 +121,12 @@ void lists(View root,AudioMetadata& m) {
 Value native(const AudioMetadata& m,std::string_view fallback) {
     check(valid(m));auto old=json(m.preservedNative.empty()?fallback:m.preservedNative);check(old.isArray());
     auto out=choc::value::createEmptyArray();Value smpl=choc::value::createObject({});
+    // Children this API does not manage, from every adtl/INFO list of the source. They
+    // are written back inside the single regenerated list of each type: a second list
+    // of the same type would be ignored by readers that stop at the first one.
+    Bytes keptAdtl,keptInfo;
+    auto keep=[](Bytes& kept,std::span<const std::uint8_t> whole){
+        check(whole.size()<=16777212&&kept.size()<=16777212-whole.size());kept.insert(kept.end(),whole.begin(),whole.end());};
     for(auto chunk:old) {
         const auto type=fieldText(chunk,"type");
         if(type=="cue ")continue;
@@ -119,18 +134,18 @@ Value native(const AudioMetadata& m,std::string_view fallback) {
         if(type=="LIST") {
             const auto subtype=fieldText(chunk,"listType");
             if(subtype=="adtl"&&chunk["data"].isString()) {
-                Bytes kept;auto bytes=decode(chunk["data"]);
+                auto bytes=decode(chunk["data"]);
                 children(bytes,[&](auto tag,auto,auto whole) {
-                    if(tag!=0x6c62616c&&tag!=0x65746f6e&&tag!=0x7478746c)kept.insert(kept.end(),whole.begin(),whole.end());
+                    if(tag!=0x6c62616c&&tag!=0x65746f6e&&tag!=0x7478746c)keep(keptAdtl,whole);
                 });
-                if(!kept.empty())out.addArrayElement(rawList(subtype,kept));continue;
+                continue;
             }
             if((subtype=="INFO"||subtype=="info")&&chunk["data"].isString()) {
-                Bytes kept;auto bytes=decode(chunk["data"]);
+                auto bytes=decode(chunk["data"]);
                 children(bytes,[&](auto tag,auto,auto whole) {
-                    if(canonical(four(tag))==four(tag))kept.insert(kept.end(),whole.begin(),whole.end());
+                    if(canonical(four(tag))==four(tag))keep(keptInfo,whole);
                 });
-                if(!kept.empty())out.addArrayElement(rawList(subtype,kept));continue;
+                continue;
             }
             if(subtype.empty()&&chunk["items"].isArray())continue;
         }
@@ -153,6 +168,7 @@ Value native(const AudioMetadata& m,std::string_view fallback) {
         put(b,v.country,2);put(b,v.language,2);put(b,v.dialect,2);put(b,v.codePage,2);
         b.insert(b.end(),v.text.begin(),v.text.end());b.push_back(0);child(adtl,0x7478746c,b);
     }
+    keep(adtl,keptAdtl);
     if(!adtl.empty())out.addArrayElement(rawList("adtl",adtl));
     auto loops=choc::value::createEmptyArray();
     for(auto& v:m.loops)loops.addArrayElement(choc::json::create("ID",std::int64_t(v.id),"loopType",std::int64_t(v.mode),
@@ -166,6 +182,7 @@ Value native(const AudioMetadata& m,std::string_view fallback) {
     for(auto& v:m.tags) {
         auto key=nativeKey(v.key);Bytes b(v.value.begin(),v.value.end());b.push_back(0);child(info,four(key),b);
     }
+    keep(info,keptInfo);
     if(!info.empty())out.addArrayElement(rawList("INFO",info));
     return out;
 }

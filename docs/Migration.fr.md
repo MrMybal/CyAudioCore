@@ -38,7 +38,7 @@ target_link_libraries(MyApplication PRIVATE CyAudioCore::CyAudioCore)
 Autre possibilité : fournir CYAUDIOCORE_CYDSP_SOURCE_DIR lors de la configuration
 de CyAudioCore. Aucun téléchargement implicite ou chemin absolu de développeur
 n'est codé dans la bibliothèque. Sans cible préexistante ni chemin explicite,
-CyAudioCore recherche un paquet CyDSP >= 0.2.0 installé.
+CyAudioCore recherche un paquet CyDSP 0.3 installé (même version mineure).
 
 ```cmake
 find_package(CyAudioCore 0.1 CONFIG REQUIRED COMPONENTS Plugins Sources)

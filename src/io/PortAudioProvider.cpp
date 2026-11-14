@@ -30,18 +30,23 @@ Status PortAudioRuntime::acquire() noexcept {
     if (!initialized) {
         const auto r = portAudioStatus(api.initialize());
         if (r != Status::ok) return r;
-        initialized = true;
+        initialized = true; refreshedAt = now();
     }
     ++leases; return Status::ok;
 }
+std::uint64_t PortAudioRuntime::now() const noexcept { return clock ? clock() : audioSteadyNow(); }
 void PortAudioRuntime::release() noexcept {
     if (leases && --leases == 0 && initialized) { (void)api.terminate(); initialized = false; }
 }
 Status PortAudioRuntime::refresh() noexcept {
     // PortAudio's catalogue is an initialization-time snapshot. Never invalidate live streams.
     if (streams) return Status::ok;
+    // Rate limit, independent of how often the owner scans: reinitializing every host
+    // API on each poll would stall the control thread while waiting for a device.
+    const auto time = now();
+    if (initialized && refreshIntervalNs && time - refreshedAt < refreshIntervalNs) return Status::ok;
     if (initialized) { const auto r = portAudioStatus(api.terminate()); initialized = false; if (r != Status::ok) return r; }
-    const auto r = portAudioStatus(api.initialize()); initialized = r == Status::ok; return r;
+    const auto r = portAudioStatus(api.initialize()); initialized = r == Status::ok; refreshedAt = time; return r;
 }
 namespace {
 PaHostApiTypeId nativeHost(AudioBackend b) noexcept {
@@ -120,7 +125,7 @@ class PortAudioStream final : public AudioProviderStream {
 };
 class PortAudioContext final : public AudioProviderContext {
   public:
-    struct Record { PaDeviceIndex index; std::string key; bool input; };
+    struct Record { PaDeviceIndex index; std::string key; bool input; std::string name; };
     std::shared_ptr<PortAudioRuntime> runtime;
     std::vector<Record> records;
     PaHostApiTypeId type = paInDevelopment;
@@ -163,8 +168,14 @@ class PortAudioContext final : public AudioProviderContext {
                     std::string key = "cyaudio.portaudio/1/" + std::to_string(session) + "/" + std::to_string(int(type)) + (input ? "/input/" : "/output/");
                     constexpr char hex[] = "0123456789abcdef";
                     for (unsigned char c : name) { key += hex[c >> 4]; key += hex[c & 15]; }
+                    // Identical names (two interfaces of one model) get a positional ordinal:
+                    // each stays selectable. The first keeps the plain key; like the key
+                    // itself the ordinal is scoped to this catalogue, not persistent.
+                    unsigned ordinal = 1;
+                    for (const auto& item : nextRecords) if (item.input == input && item.name == name) ++ordinal;
+                    if (ordinal > 1) key += "/" + std::to_string(ordinal);
                     next.push_back({key,name,input,i == (input ? api->defaultInputDevice : api->defaultOutputDevice),{},backend(),false,AudioProvider::portAudio});
-                    nextRecords.push_back({i,key,input});
+                    nextRecords.push_back({i,key,input,name});
                 }
             }
             records.swap(nextRecords); out.swap(next); return Status::ok;

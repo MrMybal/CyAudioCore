@@ -10,10 +10,45 @@ plugin calls and worker accounting, with a read-only application header probe.
 ## Synthesis measurements
 
 The synthesis measurement target is `CYAUDIOCORE_BUILD_MEASUREMENTS`, disabled by
-default. `scripts/run_native.py --measure` explicitly runs oscillator and wavetable
-sources with 16/64 voices, float/double, 32/128/512 stereo frames at 48 kHz.
+default. `scripts/run_native.py --measure` explicitly runs oscillator, wavetable
+and sampler sources with 16/64 voices, float/double, 32/128/512 stereo frames at 48 kHz.
 CyDSP owns the numerical/FFT/stretch benchmarks. This is not a JUCE comparison or
 an audio-device benchmark.
+
+## Block envelopes and sampler playback with CyDSP 0.3.0
+
+2026-11-14, Windows x64, MSVC 19.40 Release, automatic VectorOps backend **AVX512** on
+this run. The baseline is CyAudioCore `c75a63c` with CyDSP `04f94e2`: one
+`SampleData::value` call per frame and channel, one `Adsr::next` call per frame.
+The updated path calls the CyDSP 0.3.0 block forms `SampleData::render` and
+`Adsr::process` once per voice and MIDI-delimited span. The measurement source is
+the same file in both executables; it now also runs a sampler source.
+
+| 128 stereo frames | Before us/block | After us/block | Speedup |
+| --- | ---: | ---: | ---: |
+| sampler, float, 16 voices | 69.062 | 13.231 | 5.22x |
+| sampler, float, 64 voices | 286.544 | 53.644 | 5.34x |
+| sampler, double, 16 voices | 66.737 | 13.675 | 4.88x |
+| sampler, double, 64 voices | 285.519 | 54.638 | 5.23x |
+| oscillator, float, 16 voices | 12.037 | 10.650 | 1.13x |
+| oscillator, float, 64 voices | 52.413 | 45.819 | 1.14x |
+| oscillator, double, 16 voices | 11.838 | 10.481 | 1.13x |
+| oscillator, double, 64 voices | 51.025 | 46.138 | 1.11x |
+| wavetable, float, 16 voices | 17.306 | 15.875 | 1.09x |
+| wavetable, float, 64 voices | 69.606 | 63.400 | 1.10x |
+| wavetable, double, 16 voices | 16.825 | 15.369 | 1.09x |
+| wavetable, double, 64 voices | 68.388 | 62.250 | 1.10x |
+
+The sampler case plays one second of looped stereo material (256-frame loop
+crossfade) at notes 36 and up with root 60, so voices read the native level and
+several mip levels. Three paired trials alternate the two executables; each value
+is the median of trial medians. The final-sample checksums are identical in all 36
+cases, and CyDSP regressions check that both block forms return exactly the
+per-call values. All rows, including 32 and 512 frames, are in
+[synthesis-cydsp-0.3.0.json](measurements/synthesis-cydsp-0.3.0.json). These are
+complete public `Synthesizer::process` costs on one machine, not callback
+percentiles, and frequent events create shorter spans than the sustained notes
+measured here.
 
 ## Integration with the optimized CyDSP wavetable processor
 

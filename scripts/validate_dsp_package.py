@@ -66,6 +66,8 @@ if a.require_prepared_optimizations:
 #include <type_traits>
 static_assert(std::is_same_v<cyaudio::AudioBlock<float>,cydsp::AudioBlock<float>>);
 static_assert(std::is_same_v<cyaudio::Status,cydsp::Status>);
+// Core requires the CyDSP 0.3 package; an older installed header fails here.
+static_assert(CYDSP_VERSION_MAJOR > 0 || CYDSP_VERSION_MINOR >= 3);
 int main() {
     using cydsp::Status;
     cyaudio::AudioBuffer<float> input, output;
@@ -156,6 +158,14 @@ int main() {
     cydsp::Granulator<float> grains;
     if (sample.prepare(input.block(),48000)!=Status::ok || grains.prepare({48000,8,1},sample,2)!=Status::ok ||
         grains.trigger({})!=Status::ok || grains.process(out)!=Status::ok) return 8;
+    // CyDSP 0.3 block forms used by the Core synthesizer, linked from the installed archive.
+    cydsp::Adsr envelope; float curve[8];
+    if (envelope.prepare(48000)!=Status::ok || envelope.setParameters({0,0,1,0})!=Status::ok) return 34;
+    envelope.noteOn(); envelope.process(std::span<float>(curve));
+    for (auto value : curve) if (value!=1.f) return 35;
+    double position=0; std::size_t inside=0;
+    if (sample.render(position,1,cydsp::SampleInterpolation::linear,out,inside)!=Status::ok ||
+        inside!=8 || position!=8 || out.channel(0)[7]!=.25f) return 36;
     float cycle[16]; for (auto& value : cycle) value=.25f;
     cydsp::Wavetable<float> table;
     if (table.prepare(cycle)!=Status::ok) return 9;
