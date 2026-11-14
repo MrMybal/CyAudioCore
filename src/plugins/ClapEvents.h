@@ -169,7 +169,9 @@ inline Status decodeClapEvent(const clap_event_header_t* h, PluginEventBuffer& o
         e.port = c.port_index;
         e.channel = c.channel;
         e.key = c.key;
-        e.value = c.velocity;
+        // Choke/end velocity is unspecified and ignored by the CLAP contract.
+        // Do not reject a voice-release notification for unused foreign bits.
+        e.value = h->type <= CLAP_EVENT_NOTE_OFF ? c.velocity : 0;
     } else if (h->type == CLAP_EVENT_NOTE_EXPRESSION) {
         if (h->size < sizeof(clap_event_note_expression_t))
             return Status::invalid_argument;

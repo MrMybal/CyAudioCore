@@ -6,6 +6,8 @@ Séparation des responsabilités DSP et services audio ; headers, namespaces et 
 
 ## Changements depuis l'import initial
 
+- CLAP devient le format principal : contrôles des extensions stables 1.2.10, configurations de ports, modulation polyphonique, presets, métadonnées et services applicatifs ; voir le [contrat et ses limites](docs/Clap.fr.md).
+
 - Exige CyDSP 0.3.0. Le synthétiseur rend les enveloppes et les voix d'échantillonneur par les formes par bloc `Adsr::process` et `SampleData::render` de CyDSP, à sortie inchangée ; voir les [mesures](docs/Measurements.md).
 - Sources : `ReadAheadSource::readAt` n'efface que les frames qu'il n'écrit pas ; les workers de lecture anticipée et d'enregistrement sont réveillés par une notification non bloquante au lieu d'une interrogation toutes les millisecondes.
 - Fichiers : les échecs d'écriture sont signalés, le PCM entier est restitué exactement et l'export arrondit au plus proche, un fichier sans métadonnées se réexporte, une écriture par chemin ne remplace la destination qu'une fois complète, et les écarts bénins RIFF/AIFF sont tolérés dans les mêmes bornes.

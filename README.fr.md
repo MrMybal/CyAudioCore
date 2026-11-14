@@ -31,7 +31,7 @@ L’application choisit son interface et peut utiliser CyUI. Les buffers, types 
 - Audio/MIDI : périphériques, reconnexion, horloges, MIDI1/MPE/UMP/MIDI2/MIDI-CI.
 - Fichiers : codecs, métadonnées, proxy PCM, cache de formes d’onde et instruments.
 - Sources : lecture en arrière-plan, transport et enregistrement.
-- Plugins : CLAP/VST3/LV2/JSFX, paramètres, états, éditeurs natifs et isolation en processus.
+- Plugins : CLAP principal, VST3/LV2/JSFX en choix explicite ; paramètres, états, éditeurs natifs et isolation en processus. Voir [capacités CLAP et intégration](docs/Clap.fr.md).
 
 ---
 

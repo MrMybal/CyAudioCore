@@ -197,11 +197,17 @@ using namespace cyaudio;
                         nullptr, nullptr, GetModuleHandleW(nullptr), nullptr);
     require(parent.handle != nullptr);
     PluginEditorSize size;
+    PluginWindowApi preferred{}; bool floating = true;
+    ok(instance.clapExtensions()->preferredEditorApi(preferred, floating));
+    require(preferred == PluginWindowApi::win32 && !floating);
     ok(instance.openEditor(
         {PluginWindowApi::win32, reinterpret_cast<std::uintptr_t>(parent.handle), false, 1.5},
         size));
     require(size.width == 320 && size.height == 160 &&
             GetWindow(parent.handle, GW_CHILD) != nullptr);
+    ClapGuiHints hints;
+    ok(instance.clapExtensions()->editorHints(hints));
+    require(hints.horizontal && hints.vertical && hints.preserveAspect && hints.aspectWidth == 2 && hints.aspectHeight == 1);
     size = {32, 20};
     ok(instance.resizeEditor(size));
     require(size.width == 100 && size.height == 80);

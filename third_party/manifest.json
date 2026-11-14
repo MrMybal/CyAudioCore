@@ -658,7 +658,7 @@
         }
       ],
       "adaptedFiles": [],
-      "scope": "Pinned unmodified interface headers and minimal ABI implementation files only; original CyDSP host/export/editor adapters use private SDK types. No external plugin or GUI framework code.",
+      "scope": "Pinned unmodified CLAP 1.2.10 interface headers only; original CyAudioCore host, stable extension controls and preset discovery use private SDK types. No external plugin or GUI framework code is linked into production.",
       "noticePath": "third_party/licenses/clap.txt",
       "copyrights": []
     },

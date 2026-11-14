@@ -23,6 +23,7 @@
 #include "cyaudio/midi/UmpEndpointService.h"
 #include "cyaudio/midi/UmpExtensions.h"
 #include "cyaudio/plugins/Plugin.h"
+#include "cyaudio/plugins/ClapExtensions.h"
 #include "cyaudio/plugins/PluginWorker.h"
 #include "cyaudio/sources/AudioSource.h"
 #include "cyaudio/sources/AudioTransport.h"

@@ -1,5 +1,9 @@
 # Split validation — 2026-11-12
 
+The current CLAP extension work has its own [2026-11-14 validation record](ClapValidation.md),
+including the immutable DSP dependency revision and independent headless reference
+plugins. The older matrix below describes its original split snapshot.
+
 The delivered source snapshot was validated as two independent projects.
 
 | Check | Result |

@@ -22,6 +22,7 @@ void sourcesRegression(); void sourcePolicyRegression();
 #if defined(CYAUDIOCORE_TEST_PLUGINS)
 void pluginRegression(const std::filesystem::path&); void openPluginRegression(const std::filesystem::path&);
 void vstStateRegression(const std::filesystem::path&);
+void clapExtensionsRegression(const std::filesystem::path&);
 void vstPluginRegression(const std::filesystem::path&); void pluginWorkerRegression(const std::filesystem::path&);
 #endif
 namespace {
@@ -53,6 +54,7 @@ const Suite suites[] = {
 #endif
 #if defined(CYAUDIOCORE_TEST_PLUGINS)
  {"plugin", &pluginRegression}, {"openPlugin", &openPluginRegression}, {"vstPlugin", &vstPluginRegression},
+ {"clapExtensions", &clapExtensionsRegression},
  {"vstState", &vstStateRegression}, {"pluginWorker", &pluginWorkerRegression},
 #endif
 };

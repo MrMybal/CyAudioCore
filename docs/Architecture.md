@@ -21,6 +21,12 @@ The worker API preserves its single-plugin mailbox protocol and fixed one-block
 pipeline latency. Application-side grouping/scheduling and security sandboxing are
 separate responsibilities. See [migration](Migration.fr.md) and [plugins](Plugins.md).
 
+CLAP is the primary plugin format. Its stable advanced control interfaces are
+exposed through original portable types in ClapExtensions.h; the upstream C ABI
+stays private. Application menus, track context and an optional task executor are
+negotiated services, with bounded main-thread delivery of native diagnostics.
+See [CLAP contracts, worker boundary and validation](Clap.fr.md).
+
 AudioProvider selects miniaudio (default) or the opt-in PortAudio implementation;
 AudioBackend remains the system API. Private context/stream interfaces own native
 resources. Both providers share a prepared planar/interleaved callback adapter

@@ -2,6 +2,9 @@
 
 # Plugin hosting and native editors
 
+CLAP is the primary format. The default createPluginProvider overload selects it.
+See the [stable CLAP extension API, integration and limits](Clap.fr.md).
+
 Link CyAudioCore::Plugins (CYAUDIOCORE_BUILD_PLUGINS, on by default). Production creates a static
 archive; fixture plugin modules and the fixture worker executable are built only
 with the explicit CYAUDIOCORE_BUILD_TESTS option. No installed third-party plugin is

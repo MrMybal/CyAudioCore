@@ -288,13 +288,14 @@ template <Sample T> class Server {
             return reconfigure(request == Command::load);
         if (request == Command::openEditor) {
 #if defined(_WIN32)
-            if (h.windowApi != std::uint32_t(PluginWindowApi::win32))
+            if (h.windowApi != std::uint32_t(PluginWindowApi::win32) &&
+                !(h.windowApi == std::uint32_t(PluginWindowApi::unspecified) && h.floating && !h.windowHandle))
                 return Status::unsupported_backend;
 #else
             if (!h.floating || h.windowHandle)
                 return Status::unsupported_backend;
 #endif
-            if (h.windowApi > std::uint32_t(PluginWindowApi::wayland) || h.floating > 1)
+            if (h.windowApi > std::uint32_t(PluginWindowApi::unspecified) || h.floating > 1)
                 return Status::invalid_argument;
             PluginEditorSize size;
             result = plugin.openEditor({PluginWindowApi(h.windowApi),

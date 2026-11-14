@@ -183,6 +183,13 @@ int main() {
     if (binaural.prepare({48000,8,1},bank)!=Status::ok) return 13;
     cyaudio::AudioBuffer<float> stereo;
     if (stereo.resize(2,8)!=Status::ok || binaural.process(input.block(),stereo.block())!=Status::ok) return 14;
+    // The CLAP facade/discovery symbols and public headers must survive install/relocation.
+    cyaudio::ClapPresetDiscovery discovery;
+    if (discovery.catalogue()!=nullptr) return 37;
+    std::unique_ptr<cyaudio::PluginProvider> clap;
+    if (cyaudio::createPluginProvider(clap)!=Status::ok || !clap) return 38;
+    cyaudio::PluginInstance emptyPlugin;
+    if (emptyPlugin.clapExtensions()!=nullptr) return 39;
     return 0;
 }
 ''', encoding='utf-8', newline='\n')
@@ -202,6 +209,7 @@ try:
     run('build', [a.cmake, '--build', str(folder/'consumer-build'), '--config', 'Release'])
     run('run', [str(folder/'consumer-build/Release/consumer.exe')])
     assert not list((relocated/'include').rglob('portaudio.h')), 'Provider headers leaked'
+    assert not (relocated/'include/clap').exists(), 'CLAP SDK leaked into public include tree'
     report['inputsUnchanged'] = report['sourceSha256']==source_digest() and report['dependency']==dependency_fingerprint(a.cydsp_source)
     assert report['inputsUnchanged'], 'Compiler inputs changed during package validation'
     report['status'] = 'passed'

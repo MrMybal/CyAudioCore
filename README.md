@@ -31,7 +31,7 @@ The application chooses its GUI and may use CyUI. Shared buffers, types and opti
 - Audio/MIDI: devices, reconnection, clocks, MIDI1/MPE/UMP/MIDI2/MIDI-CI.
 - Files: codecs, metadata, PCM proxy, waveform cache and instruments.
 - Sources: background playback, transport and recording.
-- Plugins: CLAP/VST3/LV2/JSFX, parameters, states, native editors and process isolation.
+- Plugins: CLAP as the primary format, with explicit VST3/LV2/JSFX alternatives; parameters, states, native editors and process isolation. See [CLAP capabilities and integration](docs/Clap.fr.md).
 
 ---
 
@@ -72,7 +72,7 @@ CyAudioCore uses the [MIT license](LICENSE). Dependencies retain their own terms
 | [rtmidi](https://github.com/thestk/rtmidi) | [MIT](third_party/licenses/rtmidi.txt) | Unmodified private backend for physical MIDI input/output; nonbinding contribution request is not a license condition. |
 | [choc](https://github.com/Tracktion/choc) | [ISC AND BSD-3-Clause AND LicenseRef-minimp3-Public-Domain](third_party/licenses/choc.txt) | Private pinned file codecs; separately adapted WAV reader/writer preserves LIST subtype/raw metadata and validates RIFF padding/lengths. Pristine upstream headers retained byte-exact. ISC wrapper and embedded permissive codec notices retained. |
 | [windows-midi](https://github.com/microsoft/MIDI) | [MIT](third_party/licenses/windows-midi.txt) | Only native Windows MIDI Services COM ABI declarations and endpoint GUIDs adapted; no service, driver, SDK binary, synthesizer or GUI imported. Original interface definitions retained for pinned provenance. Stream/Function Block identity and text bit-packing adapted into original bounded portable helpers; no WinRT implementation/runtime linked. |
-| [clap](https://github.com/free-audio/clap) | [MIT](third_party/licenses/clap.txt) | Pinned unmodified interface headers and minimal ABI implementation files only; original CyDSP host/export/editor adapters use private SDK types. No external plugin or GUI framework code. |
+| [clap](https://github.com/free-audio/clap) | [MIT](third_party/licenses/clap.txt) | Private pinned CLAP 1.2.10 interfaces; original host, stable extension controls and preset discovery. |
 | [vst3-interfaces](https://github.com/steinbergmedia/vst3_pluginterfaces) | [MIT](third_party/licenses/vst3-interfaces.txt) | Pinned unmodified interface headers and minimal ABI implementation files only; original CyDSP host/export/editor adapters use private SDK types. No external plugin or GUI framework code. |
 | [lv2](https://github.com/lv2/lv2) | [ISC](third_party/licenses/lv2.txt) | Private original CyDSP LV2 hosting dependencies. |
 | [lilv](https://github.com/lv2/lilv) | [ISC](third_party/licenses/lilv.txt) | Private original CyDSP LV2 hosting dependencies. |

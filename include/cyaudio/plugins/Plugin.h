@@ -7,11 +7,13 @@
 #include <string>
 #include <string_view>
 namespace cyaudio {
+class ClapExtensions;
+struct ClapHostServices;
 namespace detail {
 struct PluginInstanceAccess; // Private door for the separate-process worker service.
 }
 enum class PluginFormat { clap, vst3, audioUnit, aax, lv2, jsfx, custom };
-enum class PluginWindowApi { win32, cocoa, x11, wayland };
+enum class PluginWindowApi { win32, cocoa, x11, wayland, unspecified }; // CLAP floating API.
 struct PluginWindow {
     PluginWindowApi api = PluginWindowApi::win32;
     std::uintptr_t handle = 0;
@@ -83,6 +85,10 @@ struct PluginAudioPort {
     std::uint32_t id = 0, channels = 0, inPlacePair = 0xffffffffu;
     std::string name, type;
     bool main = false, supports64 = false;
+    bool prefers64 = false, commonSampleSize = false;
+    std::vector<std::uint8_t> surroundMap;
+    bool ambisonicKnown = false;
+    std::uint32_t ambisonicOrdering = 0, ambisonicNormalization = 0;
 };
 struct PluginNotePort {
     std::uint32_t id = 0, dialects = 0, preferredDialect = 0;
@@ -104,6 +110,7 @@ struct PluginParameter {
     std::uint32_t automationTargets = 0,
                   modulationTargets = 0; // Per-note/port/channel/key support.
     std::string units{};
+    bool periodic = false, bypass = false, requiresProcess = false, enumeration = false;
 };
 struct PluginDescription {
     PluginDescriptor plugin;
@@ -198,7 +205,15 @@ enum PluginRequest : std::uint32_t {
     pluginEditorHide = 1024,
     pluginEditorResize = 2048,
     // Output events the host could not translate or store were dropped; audio is kept.
-    pluginEventsDropped = 4096
+    pluginEventsDropped = 4096,
+    pluginParameterFlush = 8192,
+    pluginAudioConfigurationsChanged = 16384,
+    pluginNoteNamesChanged = 32768,
+    pluginRemoteControlsChanged = 65536,
+    pluginVoiceInfoChanged = 131072,
+    pluginPresetLoaded = 262144,
+    pluginPresetError = 524288,
+    pluginLogsDropped = 1048576
 };
 struct PluginHostCallbacks {
     void* context = nullptr;
@@ -209,6 +224,7 @@ struct PluginHostCallbacks {
     // Optional native controller edits on UI. Audio/worker recording receives
     // the same live gestures/values through PluginProcess::outputEvents.
     void (*edited)(void*, const PluginEvent&) noexcept = nullptr;
+    const ClapHostServices* clap = nullptr; // Copied at create(); see ClapExtensions.h.
 };
 // Original provider boundary for separately supplied licensed/native formats.
 // Control/UI functions run on the creating UI thread; start/stop/reset/process
@@ -217,6 +233,7 @@ struct PluginHostCallbacks {
 class PluginBackend {
   public:
     virtual ~PluginBackend() = default;
+    virtual ClapExtensions* clapExtensions() noexcept { return nullptr; }
     [[nodiscard]] virtual const PluginDescription& description() const noexcept = 0;
     virtual Status activate(const PluginPrepareOptions&) noexcept = 0;
     virtual Status deactivate() noexcept = 0;
@@ -285,6 +302,7 @@ class PluginInstance {
     static Status adopt(std::unique_ptr<PluginBackend>, PluginInstance&) noexcept;
     const PluginDescription* description() const noexcept;
     PluginLifecycle lifecycle() const noexcept;
+    ClapExtensions* clapExtensions() noexcept;
     Status activate(const PluginPrepareOptions& = {}) noexcept;
     Status start() noexcept;
     Status process(const PluginProcess<float>&) noexcept;
@@ -293,9 +311,11 @@ class PluginInstance {
     Status reset() noexcept;
     Status deactivate() noexcept;
     Status refresh() noexcept; // Inactive; refreshes ports/parameters after restart/rescan.
-    Status parameterValue(std::uint32_t, double&) noexcept; // Main, not concurrently processing.
+    Status parameterValue(std::uint32_t, double&) noexcept; // Main; CLAP also allows while processing.
     Status parameterText(std::uint32_t, double, std::string&) noexcept;
     Status flush(const PluginEventBuffer&, PluginEventBuffer&) noexcept; // Inactive main only.
+    // Active CLAP flush: serialized audio owner, never concurrently with process().
+    Status flushAudio(const PluginEventBuffer&, PluginEventBuffer&) noexcept;
     Status saveState(std::vector<std::uint8_t>&,
                      std::size_t maximumBytes = 64 * 1024 * 1024) noexcept;
     Status loadState(std::span<const std::uint8_t>) noexcept; // Inactive, bounded by 64 MiB.
@@ -325,4 +345,8 @@ class PluginProvider {
 };
 // Creates an actual built-in adapter when compiled/supported. Never substitutes formats.
 Status createPluginProvider(PluginFormat, std::unique_ptr<PluginProvider>&) noexcept;
+// CLAP is the primary format; other formats remain explicit choices.
+inline Status createPluginProvider(std::unique_ptr<PluginProvider>& result) noexcept {
+    return createPluginProvider(PluginFormat::clap, result);
+}
 } // namespace cyaudio

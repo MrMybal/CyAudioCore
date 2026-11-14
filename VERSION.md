@@ -6,6 +6,8 @@ Separate DSP and audio-service ownership, headers, namespaces and CMake targets.
 
 ## Changes since the initial import
 
+- CLAP becomes the primary format: stable 1.2.10 extension controls, port configurations, polyphonic modulation, presets, metadata and application services; see the [contract and boundaries](docs/Clap.fr.md).
+
 - Requires CyDSP 0.3.0. The synthesizer renders envelopes and sampler voices through the CyDSP block forms `Adsr::process` and `SampleData::render`, with unchanged output; see [measurements](docs/Measurements.md).
 - Sources: `ReadAheadSource::readAt` clears only the frames it does not write, and the read-ahead and recorder workers are woken by a non-blocking notification instead of polling every millisecond.
 - Files: write failures are reported, integer PCM round-trips exactly and exports round to nearest, a file without metadata can be re-exported, path writes replace the destination only when complete, and benign RIFF/AIFF deviations are tolerated within the same bounds.

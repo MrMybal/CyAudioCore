@@ -123,6 +123,9 @@ Status PluginInstance::adopt(std::unique_ptr<PluginBackend> backend,
 const PluginDescription* PluginInstance::description() const noexcept {
     return state_ ? &state_->backend->description() : nullptr;
 }
+ClapExtensions* PluginInstance::clapExtensions() noexcept {
+    return state_ ? state_->backend->clapExtensions() : nullptr;
+}
 PluginLifecycle PluginInstance::lifecycle() const noexcept {
     return state_ ? PluginLifecycle(state_->phase.load(std::memory_order_acquire))
                   : PluginLifecycle::empty;
@@ -355,7 +358,7 @@ Status PluginInstance::parameterValue(std::uint32_t id, double& value) noexcept 
         return Status::not_prepared;
     if (!state_->onMain())
         return Status::invalid_argument;
-    if (lifecycle() == PluginLifecycle::processing)
+    if (lifecycle() == PluginLifecycle::processing && !state_->backend->clapExtensions())
         return Status::transition_in_progress;
     return state_->backend->parameterValue(id, value);
 }
@@ -374,6 +377,21 @@ Status PluginInstance::flush(const PluginEventBuffer& in, PluginEventBuffer& out
     if (lifecycle() != PluginLifecycle::initialized)
         return Status::transition_in_progress;
     out.reset();
+    return state_->backend->flush(in, out);
+}
+Status PluginInstance::flushAudio(const PluginEventBuffer& in, PluginEventBuffer& out) noexcept {
+    if (!state_)
+        return Status::not_prepared;
+    if (&in == &out)
+        return Status::invalid_argument;
+    if (!state_->backend->clapExtensions())
+        return Status::unsupported_format;
+    if (lifecycle() != PluginLifecycle::active && lifecycle() != PluginLifecycle::processing)
+        return Status::transition_in_progress;
+    if (in.size() > state_->options.maximumEvents)
+        return Status::block_too_large;
+    out.reset();
+    detail::PluginAudioScope audio(state_->backend.get());
     return state_->backend->flush(in, out);
 }
 Status PluginInstance::saveState(std::vector<std::uint8_t>& out, std::size_t limit) noexcept {
@@ -415,7 +433,8 @@ PluginTiming PluginInstance::timing() const noexcept {
 Status PluginInstance::openEditor(const PluginWindow& w, PluginEditorSize& size) noexcept {
     if (!state_)
         return Status::not_prepared;
-    if (!state_->onMain() || !isFinite(w.scale) || w.scale <= 0 || w.scale > 16 ||
+    if (!state_->onMain() || std::uint32_t(w.api) > std::uint32_t(PluginWindowApi::unspecified) ||
+        !isFinite(w.scale) || w.scale <= 0 || w.scale > 16 ||
         (!w.floating && !w.handle))
         return Status::invalid_argument;
     if (state_->editor)

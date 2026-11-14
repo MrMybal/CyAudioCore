@@ -22,7 +22,7 @@ used by these modules.
 | FLAC embedded in CHOC | BSD 3-clause | FLAC decoding and encoding |
 | Ogg/Vorbis embedded in CHOC | BSD 3-clause, plus retained Degener/Bormann notice | Vorbis decoding and encoding |
 | minimp3 embedded in CHOC | Upstream public-domain dedication | MP3 decoding only |
-| CLAP pinned C interfaces | MIT | Original host adapter and original ABI fixture plugin |
+| CLAP pinned C interfaces | MIT | Original host, stable extension controls, preset discovery and original ABI fixtures |
 | Current Steinberg VST3 pluginterfaces | MIT | Original processor/controller/editor host adapter and original ABI fixture |
 
 The manifest pins every imported file, including embedded codec headers, by commit,

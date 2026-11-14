@@ -282,7 +282,13 @@ const void* CLAP_ABI Fixture::extension(const clap_plugin_t*, const char* id) no
             return false;
 #endif
         },
-        [](const clap_plugin_t*, const char**, bool*) noexcept { return false; },
+        [](const clap_plugin_t*, const char** api, bool* floating) noexcept {
+#if defined(_WIN32)
+            *api = CLAP_WINDOW_API_WIN32; *floating = false; return true;
+#else
+            (void)api; (void)floating; return false;
+#endif
+        },
         [](const clap_plugin_t* p, const char*, bool) noexcept {
             return self(p).editor = self(p).thread(false);
         },
@@ -303,7 +309,9 @@ const void* CLAP_ABI Fixture::extension(const clap_plugin_t*, const char* id) no
             return true;
         },
         [](const clap_plugin_t*) noexcept { return true; },
-        [](const clap_plugin_t*, clap_gui_resize_hints_t*) noexcept { return false; },
+        [](const clap_plugin_t*, clap_gui_resize_hints_t* hints) noexcept {
+            *hints = {true, true, true, 2, 1}; return true;
+        },
         [](const clap_plugin_t*, std::uint32_t* w, std::uint32_t* h) noexcept {
             *w = std::max(100u, *w);
             *h = std::max(80u, *h);

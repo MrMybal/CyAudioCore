@@ -69,12 +69,14 @@ for folder in ('include', 'src', 'tests', 'examples'):
                     'ISA intrinsics outside private kernels: ' + str(path))
         if folder == 'include':
             require('#include "detail/' not in content, 'Private include in public API: ' + str(path))
+            require(not re.search(r'#include ["<]clap/|\bclap_[a-z_]+_t\b', content),
+                    'CLAP SDK type/include in public API: ' + str(path))
 
 for path in (ROOT / 'scripts').glob('*.py'):
     ast.parse(path.read_text(encoding='utf-8'), filename=str(path))
 cmake = (ROOT / 'CMakeLists.txt').read_text(encoding='utf-8')
 require('add_library(CyAudioCoreEngine STATIC' in cmake, 'Production target must be static')
-for option in ('CYAUDIOCORE_BUILD_TESTS', 'CYAUDIOCORE_COMPILE_CHECKS'):
+for option in ('CYAUDIOCORE_BUILD_TESTS', 'CYAUDIOCORE_COMPILE_CHECKS', 'CYAUDIOCORE_BUILD_CLAP_ACCEPTANCE'):
     require(bool(re.search(r'option\(' + option + r' [^\n]+ OFF\)', cmake)), option + ' must be opt-in')
 require('add_custom_target' not in cmake and 'POST_BUILD' not in cmake,
         'Unexpected automatic native process hook')

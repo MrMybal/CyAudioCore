@@ -12,6 +12,8 @@
 Every target consumes public CyDSP declarations. The application chooses its UI,
 thread scheduling, plugin isolation policy and filesystem/device access.
 
+CLAP is the primary plugin format. See the [stable extension matrix and examples](Clap.fr.md).
+
 See the [current validated CyDSP dependency](CyDSPCurrent.fr.md) for its revision,
 archive rebuild and package compatibility checks.
 
