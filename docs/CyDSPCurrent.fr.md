@@ -1,11 +1,10 @@
 # Référence CyDSP courante — 14 novembre 2026
 
-Version intégrée et validée : **CyDSP 0.3.0**, construite sur la révision
-`04f94e29ee15d98567fcbffc3f88045082ae9279` (noyaux par tuiles, ADAA exact,
-`spectralHead`, FFT fusionnée). Au moment de cette validation, les modifications
-0.3.0 étaient présentes dans le checkout local `../CyDSP` sans commit ; la révision
-définitive est à reporter ici une fois ce commit créé. Le bilan de la révision
-précédente `b973c1b` reste dans l'historique de ce fichier.
+Version intégrée et validée : **CyDSP 0.3.0**, révision
+`e3d719f8f8753a4090ee75c2df2e399c0778dea9`. Elle s'appuie sur `04f94e2` (noyaux par
+tuiles, ADAA exact, `spectralHead`, FFT fusionnée). La validation ci-dessous a été
+exécutée sur l'arbre de travail dont ce commit est l'enregistrement exact. Le bilan
+de la révision précédente `b973c1b` reste dans l'historique de ce fichier.
 
 ## Ce qui change en 0.3.0
 
