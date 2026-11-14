@@ -148,10 +148,22 @@ Les identités miniaudio restent inchangées. Les tokens PortAudio
 `cyaudio.portaudio/1/...` sont propres au contexte et proviennent du backend, de la
 direction et du nom, sans index d'énumération persistant. `persistentIdentity=false`
 et `persistentId` vide sont explicites. Les réordonnancements sont tolérés dans ce
-contexte. Des noms identiques pour une même direction/backend restent ouvrables :
-le premier garde le token simple, les suivants reçoivent un suffixe ordinal (`/2`,
-`/3`). Cet ordinal suit l'ordre d'énumération : il peut s'échanger entre deux
-périphériques identiques après une réénumération. Tant qu'aucun flux n'est ouvert,
+contexte pour les noms qui restent uniques. Dès qu'un nom est ambigu pour une même
+direction/backend, tous ses tokens portent un suffixe `/catalogue/<génération>/<ordinal>`.
+Ils permettent de choisir chaque entrée de cet instantané, sans attribuer à
+l'ordinal une identité matérielle. Les lectures répétées du même instantané
+conservent ces tokens ; un changement de sa structure ou toute réinitialisation
+PortAudio les invalide, même si les noms et les indices semblent identiques.
+Cette règle reste appliquée au nom jusqu'à la destruction du contexte, même si
+un seul périphérique subsiste : il ne récupère aucun ancien token. Un
+rafraîchissement effectué par un autre contexte partageant le runtime est aussi pris
+en compte. `open` et `capabilities` refusent un ancien token avec
+`device_unavailable`. Réénumérer puis sélectionner explicitement un nouveau token
+permet de rouvrir le périphérique. Le gestionnaire ne reconnecte donc pas une
+ancienne sélection ambiguë sur une autre interface ; un repli par défaut reste
+possible uniquement si l'application l'a demandé.
+
+Tant qu'aucun flux n'est ouvert,
 le catalogue n'est réinitialisé qu'une fois par intervalle (2 s par défaut), ce qui
 peut retarder d'autant la détection d'un rebranchement. Après recréation du contexte,
 réénumérer et employer un sélecteur avec

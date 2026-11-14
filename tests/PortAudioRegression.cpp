@@ -14,10 +14,11 @@ struct Fake {
     static inline Fake* self = nullptr;
     int initializes = 0, terminates = 0, opens = 0, closes = 0, starts = 0, stops = 0, aborts = 0, forbidden = 0;
     bool inCallback = false, running = false, duplicate = false, reordered = false, planarOnlyFailure = false, openPlanarFailure = false;
+    bool sameNamedPair = false, firstMissing = false, swapPair = false;
     PaError initError = 0, openError = 0, startError = 0, stopError = 0, finishError = 0, enumerationError = 0;
     bool missingInfo = false;
     PaStreamCallback* callback = nullptr; PaStreamFinishedCallback* finishedCallback = nullptr; void* user = nullptr;
-    PaSampleFormat format = 0; int inputs = 0, outputs = 0; bool exclusive = false;
+    PaSampleFormat format = 0; int inputs = 0, outputs = 0, openedDevice = paNoDevice; bool exclusive = false;
     PaHostApiInfo host{1,paWASAPI,"Simulated WASAPI",1,0,0};
     PaHostApiInfo otherHost{1,paALSA,"Simulated ALSA",1,1,1};
     PaDeviceInfo device{2,"Simulated duplex",0,4,4,.01,.01,.1,.1,48000};
@@ -37,9 +38,15 @@ struct Fake {
             f.otherHost.defaultInputDevice = f.otherHost.defaultOutputDevice = f.reordered ? 0 : 1;
             return index == 0 ? &f.host : index == 1 ? &f.otherHost : nullptr;
         };
-        a.deviceCount = []() { auto& f = control(); return f.enumerationError ? f.enumerationError : f.duplicate ? 3 : 2; };
+        a.deviceCount = []() { auto& f = control(); return f.enumerationError ? f.enumerationError : f.sameNamedPair ? (f.firstMissing ? 1 : 2) : f.duplicate ? 3 : 2; };
         a.deviceInfo = [](PaDeviceIndex index) -> const PaDeviceInfo* {
-            auto& f = control(); if (index == 2 && f.duplicate) return &f.device;
+            auto& f = control();
+            if (f.sameNamedPair) {
+                if (f.firstMissing) return index == 0 ? &f.otherDevice : nullptr;
+                return index == 0 ? (f.swapPair ? &f.otherDevice : &f.device)
+                     : index == 1 ? (f.swapPair ? &f.device : &f.otherDevice) : nullptr;
+            }
+            if (index == 2 && f.duplicate) return &f.device;
             return index == (f.reordered ? 1 : 0) ? &f.device : index == (f.reordered ? 0 : 1) ? &f.otherDevice : nullptr;
         };
         a.formatSupported = [](const PaStreamParameters* in,const PaStreamParameters* out,double rate) -> PaError {
@@ -54,6 +61,7 @@ struct Fake {
             if (frames != paFramesPerBufferUnspecified) ++f.forbidden;
             f.format = out ? out->sampleFormat : in->sampleFormat;
             f.inputs = in ? in->channelCount : 0; f.outputs = out ? out->channelCount : 0;
+            f.openedDevice = out ? out->device : in->device;
             f.exclusive = (in && in->hostApiSpecificStreamInfo) || (out && out->hostApiSpecificStreamInfo);
             if (f.openError || (f.openPlanarFailure && (f.format & paNonInterleaved))) {
                 *stream = reinterpret_cast<PaStream*>(std::uintptr_t(1));
@@ -111,14 +119,20 @@ void identities() {
     AudioDeviceCapabilities caps; caps.bufferRangeKnown = true; ok(context->capabilities(key,false,caps));
     require(!caps.nativeFormatsKnown && !caps.duplexKnown && !caps.channelNamesKnown && !caps.bufferRangeKnown,"unknown hardware capabilities");
     AudioDeviceConfig c; c.outputId = key; std::unique_ptr<AudioProviderStream> stream;
-    // Two devices with one name: a positional ordinal keeps each of them selectable.
+    // A newly ambiguous name invalidates its former unique token, including the first member.
     f.duplicate = true; ok(context->enumerate(list));
-    require(list.size() == 4 && list[0].id == key && list[2].id == key + "/2" && !list[2].input && list[1].input && list[3].id == list[1].id + "/2",
-        "identical names stay distinguishable");
-    ok(context->open(c,&silence,nullptr,nullptr,stream)); stream.reset(); ok(context->capabilities(key,false,caps));
+    require(list.size() == 4 && list[0].id.starts_with(key + "/catalogue/") && list[0].id.ends_with("/1") && list[2].id.ends_with("/2") &&
+        list[0].id != list[2].id && !list[2].input && list[1].input && list[1].id != list[3].id,"identical names have snapshot-scoped tokens");
+    require(context->open(c,&silence,nullptr,nullptr,stream) == Status::device_unavailable &&
+        context->capabilities(key,false,caps) == Status::device_unavailable,"old unique token cannot select a duplicate");
+    const auto firstDuplicate = list[0].id;
+    c.outputId = firstDuplicate; ok(context->open(c,&silence,nullptr,nullptr,stream)); stream.reset(); ok(context->capabilities(c.outputId,false,caps));
     c.outputId = list[2].id; ok(context->open(c,&silence,nullptr,nullptr,stream)); stream.reset(); ok(context->capabilities(c.outputId,false,caps));
     f.duplicate = false; ok(context->enumerate(list));
     require(list.size() == 2 && context->open(c,&silence,nullptr,nullptr,stream) == Status::device_unavailable,"ordinal leaves with its device");
+    c.outputId = firstDuplicate;
+    require(context->open(c,&silence,nullptr,nullptr,stream) == Status::device_unavailable && list[0].id != key,
+        "survivor inherits neither an old duplicate token nor the original unique token");
     c.outputId = "context/0";
     require(context->open(c,&silence,nullptr,nullptr,stream) == Status::device_unavailable,"cross-provider identity rejected");
     c.outputId.clear(); c.outputChannels = 5;
@@ -134,6 +148,62 @@ void identities() {
     ok(createPortAudioContext({AudioBackend::alsa,AudioProvider::portAudio},runtime,other));
     require(other->open(c,&silence,nullptr,nullptr,stream) == Status::unsupported_backend,"exclusive unsupported host rejected");
     other.reset(); context.reset(); require(!runtime->leases && f.initializes == f.terminates,"multiple context leases balanced");
+}
+void identitySnapshots() {
+    Fake f; f.sameNamedPair = true; f.otherDevice = f.device;
+    auto runtime = std::make_shared<PortAudioRuntime>(f.api());
+    static std::uint64_t ticks; ticks = 0;
+    runtime->clock = []() noexcept { return ticks; }; runtime->refreshIntervalNs = 1000;
+    std::shared_ptr<AudioProviderContext> context; ok(createPortAudioContext(selected,runtime,context));
+    std::vector<AudioDeviceInfo> list; ok(context->enumerate(list));
+    const auto initial = list;
+    AudioDeviceConfig c; std::unique_ptr<AudioProviderStream> stream;
+    for (std::size_t i : {0u,2u}) {
+        c.outputId = initial[i].id; ok(context->open(c,&silence,nullptr,nullptr,stream));
+        require(f.openedDevice == int(i / 2),"fresh duplicate token selects its exact catalogue entry");
+        stream.reset();
+    }
+    ok(context->enumerate(list));
+    require(list[0].id == initial[0].id && list[2].id == initial[2].id,"polling within a snapshot preserves tokens");
+    auto rejected = [&](const auto& old) {
+        const auto opens = f.opens;
+        for (const auto& item : old) {
+            AudioDeviceCapabilities caps; caps.bufferRangeKnown = true;
+            require(context->capabilities(item.id,item.input,caps) == Status::device_unavailable && caps.bufferRangeKnown,
+                "stale input/output capabilities leave the result intact");
+            AudioDeviceConfig stale;
+            stale.inputChannels = item.input ? 1u : 0u; stale.outputChannels = item.input ? 0u : 1u;
+            (item.input ? stale.inputId : stale.outputId) = item.id;
+            require(context->open(stale,&silence,nullptr,nullptr,stream) == Status::device_unavailable && !stream,
+                "stale explicit token is rejected before opening a native stream");
+        }
+        require(f.opens == opens,"no native open after an ambiguous catalogue renewal");
+    };
+    // Same device fields, same count and same indices: only the physical order changed.
+    f.swapPair = true; ticks += 1000; ok(context->enumerate(list)); rejected(initial);
+    const auto swapped = list;
+    c.outputId = list[0].id; ok(context->open(c,&silence,nullptr,nullptr,stream));
+    const auto epoch = runtime->catalogueEpoch;
+    ticks += 1000; ok(context->enumerate(list));
+    require(runtime->catalogueEpoch == epoch && list[0].id == c.outputId,"an open stream keeps its snapshot and token");
+    stream.reset();
+    f.firstMissing = true; ok(context->enumerate(list)); rejected(swapped);
+    require(list.size() == 2 && list[0].id != initial[0].id && list[0].id != swapped[0].id,
+        "the second interface never inherits the unplugged first interface token");
+    const auto lone = list;
+    c.outputId = list[0].id; ok(context->open(c,&silence,nullptr,nullptr,stream));
+    require(f.openedDevice == 0,"the survivor can be explicitly reselected"); stream.reset();
+    f.firstMissing = false; ticks += 1000; ok(context->enumerate(list)); rejected(lone);
+    const auto beforePeerRefresh = list;
+    std::shared_ptr<AudioProviderContext> peer; ok(createPortAudioContext(selected,runtime,peer));
+    ticks += 1000; std::vector<AudioDeviceInfo> other; ok(peer->enumerate(other));
+    rejected(beforePeerRefresh); // No enumerate on the original context: open/capabilities must notice too.
+    ok(context->enumerate(list)); const auto beforeFailure = list;
+    f.initError = paInsufficientMemory; ticks += 1000;
+    require(context->enumerate(list) == Status::allocation_failed,"refresh failure is explicit");
+    f.initError = 0; ok(context->enumerate(list)); rejected(beforeFailure);
+    peer.reset(); context.reset();
+    require(!runtime->leases && !runtime->streams && !f.forbidden,"snapshot identity lifecycle cleanup");
 }
 void processing() {
     for (int fallback = 0; fallback < 3; ++fallback) {
@@ -199,14 +269,11 @@ void refreshLimit() {
     f.initError = 0; ok(context->enumerate(list)); require(runtime->initialized && list.size() == 2,"recovery is not rate limited");
     context.reset(); require(!runtime->leases && f.initializes == f.terminates + 1 && !f.forbidden,"refresh lifetime balance");
 }
-void manager() {
-    Fake f; auto runtime = std::make_shared<PortAudioRuntime>(f.api());
-    runtime->refreshIntervalNs = 0; // This scenario reconnects immediately in virtual time.
-    struct Driver {
-        std::shared_ptr<AudioProviderContext> context;
-        std::unique_ptr<AudioProviderStream> stream;
-    } owner;
-    ok(createPortAudioContext(selected,runtime,owner.context));
+struct Driver {
+    std::shared_ptr<AudioProviderContext> context;
+    std::unique_ptr<AudioProviderStream> stream;
+};
+AudioDeviceDriver driver(Driver& owner) {
     AudioDeviceDriver d; d.context = &owner;
     d.enumerate = [](void* p,auto& list) noexcept { return static_cast<Driver*>(p)->context->enumerate(list); };
     d.open = [](void* p,const auto& c,AudioDeviceCallback cb,void* user) noexcept {
@@ -220,6 +287,13 @@ void manager() {
     d.running = [](void* p) noexcept { return static_cast<Driver*>(p)->stream->running(); };
     d.sampleRate = [](void* p) noexcept { return static_cast<Driver*>(p)->stream->sampleRate(); };
     d.notifications = [](void* p) noexcept { return static_cast<Driver*>(p)->stream->takeNotifications(); };
+    return d;
+}
+void manager() {
+    Fake f; auto runtime = std::make_shared<PortAudioRuntime>(f.api());
+    runtime->refreshIntervalNs = 0; // This scenario reconnects immediately in virtual time.
+    Driver owner; ok(createPortAudioContext(selected,runtime,owner.context));
+    const auto d = driver(owner);
     AudioDeviceManager manager; ok(manager.prepare(d)); unsigned generation = 0;
     ok(manager.openWithContext({},[](void* p,auto,auto,const AudioCallbackContext& time) noexcept {
         *static_cast<unsigned*>(p) = time.generation; return Status::ok;
@@ -238,5 +312,29 @@ void manager() {
     manager.close(); owner.context.reset();
     require(!runtime->leases && f.initializes == f.terminates && !f.forbidden,"manager provider lifetime balance");
 }
+void managerDuplicateReconnect() {
+    Fake f; f.sameNamedPair = true; f.otherDevice = f.device;
+    auto runtime = std::make_shared<PortAudioRuntime>(f.api());
+    static std::uint64_t ticks; ticks = 0;
+    runtime->clock = []() noexcept { return ticks; }; runtime->refreshIntervalNs = 1000;
+    Driver owner; ok(createPortAudioContext(selected,runtime,owner.context));
+    std::vector<AudioDeviceInfo> list; ok(owner.context->enumerate(list));
+    AudioDeviceConfig c; c.outputId = list[0].id;
+    AudioDeviceManager manager; ok(manager.prepare(driver(owner)));
+    ok(manager.open(c,&silence,nullptr));
+    require(manager.generation() == 1 && f.opens == 1,"explicit first interface started");
+    f.firstMissing = true; f.running = false; f.finishedCallback(f.user);
+    require(manager.poll(300) == Status::device_unavailable && !manager.running(),"missing first interface closes on control");
+    ticks += 1000;
+    require(manager.poll(1200) == Status::device_unavailable,"a survivor is not an automatic reconnection target");
+    ticks += 1000;
+    require(manager.poll(2400) == Status::device_unavailable && f.opens == 1 && f.closes == 1 && manager.generation() == 1,
+        "retries never open the wrong interface or publish a new stream generation");
+    ok(owner.context->enumerate(list)); c.outputId = list[0].id;
+    ok(manager.open(c,&silence,nullptr,{},2500));
+    require(manager.generation() == 2 && f.opens == 2 && f.openedDevice == 0,"explicit reselection of the survivor starts a new stream");
+    manager.close(); owner.context.reset();
+    require(!runtime->leases && !runtime->streams && f.initializes == f.terminates && !f.forbidden,"duplicate reconnect cleanup");
 }
-void portAudioRegression() { errors(); identities(); processing(); refreshLimit(); manager(); std::cout << "PASS simulated PortAudio lifecycle/errors/identity/layout/clocks/realtime/reconnect\n"; }
+}
+void portAudioRegression() { errors(); identities(); identitySnapshots(); processing(); refreshLimit(); manager(); managerDuplicateReconnect(); std::cout << "PASS simulated PortAudio lifecycle/errors/identity/snapshots/layout/clocks/realtime/reconnect\n"; }

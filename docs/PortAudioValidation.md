@@ -1,4 +1,37 @@
-# PortAudio validation — 2026-11-12
+# PortAudio validation
+
+## Snapshot identities — 2026-11-14
+
+Windows x64, MSVC 19.40, with a local frozen archive of CyDSP 0.3.0 commit
+`e3d719f8f8753a4090ee75c2df2e399c0778dea9`.
+
+Once a name has duplicates in one direction/backend, every token for that name
+is scoped to the context's catalogue generation, including the first entry and
+a lone survivor. A runtime reinitialization retires these tokens even when all
+device fields and indices are identical. Changes to the catalogue structure also
+retire them; repeated reads of one snapshot preserve them. All identity tracking
+runs on the control owner.
+
+Deterministic fake-device regressions cover unique-to-duplicate transitions,
+identical-name reorder, first-device removal, survivor reselection, duplicate
+return, shared-context refresh, refresh failure/recovery and live-stream snapshot
+preservation. Manager retries with an obsolete explicit selection remain
+disconnected without opening the other interface or advancing the stream
+generation. Explicit reselection starts a new stream.
+
+| Check for this fix | Result |
+| --- | --- |
+| PortAudio ON, Release, full Core regressions | Passed |
+| PortAudio OFF, Release, full Core regressions | Passed |
+| PortAudio ON, AddressSanitizer, full Core regressions | Passed |
+| Independent public Core header compilation, ON/OFF/ASan | Passed |
+| Installed then relocated package consumers, PortAudio ON/OFF | Passed |
+
+Reports and logs are under `build/portaudio-identity-fix`. The independent DSP
+test suite was not run for this fix. Physical devices, actual hotplug behaviour
+and platforms other than Windows x64 remain untested.
+
+## Initial integration — 2026-11-12
 
 Subsequent compatibility checks against the completed CyDSP optimization commit,
 including its independent tests, are recorded in [CyDSP update](CyDSPUpdate.md).

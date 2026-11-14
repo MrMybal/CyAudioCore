@@ -30,7 +30,7 @@ Status PortAudioRuntime::acquire() noexcept {
     if (!initialized) {
         const auto r = portAudioStatus(api.initialize());
         if (r != Status::ok) return r;
-        initialized = true; refreshedAt = now();
+        initialized = true; ++catalogueEpoch; refreshedAt = now();
     }
     ++leases; return Status::ok;
 }
@@ -46,7 +46,9 @@ Status PortAudioRuntime::refresh() noexcept {
     const auto time = now();
     if (initialized && refreshIntervalNs && time - refreshedAt < refreshIntervalNs) return Status::ok;
     if (initialized) { const auto r = portAudioStatus(api.terminate()); initialized = false; if (r != Status::ok) return r; }
-    const auto r = portAudioStatus(api.initialize()); initialized = r == Status::ok; refreshedAt = time; return r;
+    const auto r = portAudioStatus(api.initialize()); initialized = r == Status::ok;
+    if (initialized) ++catalogueEpoch;
+    refreshedAt = time; return r;
 }
 namespace {
 PaHostApiTypeId nativeHost(AudioBackend b) noexcept {
@@ -126,8 +128,13 @@ class PortAudioStream final : public AudioProviderStream {
 class PortAudioContext final : public AudioProviderContext {
   public:
     struct Record { PaDeviceIndex index; std::string key; bool input; std::string name; };
+    struct Name { std::string value; bool input; };
     std::shared_ptr<PortAudioRuntime> runtime;
     std::vector<Record> records;
+    // Remember ambiguity for the whole context lifetime. After one duplicate vanishes,
+    // the survivor must never inherit the old unqualified token of either interface.
+    std::vector<Name> ambiguousNames;
+    std::uint64_t catalogueGeneration = 0, observedEpoch = 0;
     PaHostApiTypeId type = paInDevelopment;
     std::uint32_t session = 0;
     bool leased = false;
@@ -164,21 +171,41 @@ class PortAudioContext final : public AudioProviderContext {
                 for (bool input : {false,true}) {
                     if ((input ? device->maxInputChannels : device->maxOutputChannels) <= 0) continue;
                     const std::string name = device->name ? device->name : "";
-                    // A scoped name token, never a supposedly persistent enumeration index.
-                    std::string key = "cyaudio.portaudio/1/" + std::to_string(session) + "/" + std::to_string(int(type)) + (input ? "/input/" : "/output/");
-                    constexpr char hex[] = "0123456789abcdef";
-                    for (unsigned char c : name) { key += hex[c >> 4]; key += hex[c & 15]; }
-                    // Identical names (two interfaces of one model) get a positional ordinal:
-                    // each stays selectable. The first keeps the plain key; like the key
-                    // itself the ordinal is scoped to this catalogue, not persistent.
-                    unsigned ordinal = 1;
-                    for (const auto& item : nextRecords) if (item.input == input && item.name == name) ++ordinal;
-                    if (ordinal > 1) key += "/" + std::to_string(ordinal);
-                    next.push_back({key,name,input,i == (input ? api->defaultInputDevice : api->defaultOutputDevice),{},backend(),false,AudioProvider::portAudio});
-                    nextRecords.push_back({i,key,input,name});
+                    next.push_back({{},name,input,i == (input ? api->defaultInputDevice : api->defaultOutputDevice),{},backend(),false,AudioProvider::portAudio});
+                    nextRecords.push_back({i,{},input,name});
                 }
             }
-            records.swap(nextRecords); out.swap(next); return Status::ok;
+            auto nextAmbiguous = ambiguousNames;
+            for (const auto& item : nextRecords) {
+                const auto same = [&](const Record& other) { return item.input == other.input && item.name == other.name; };
+                if (std::count_if(nextRecords.begin(), nextRecords.end(), same) > 1 &&
+                    std::none_of(nextAmbiguous.begin(), nextAmbiguous.end(), [&](const Name& n) { return n.input == item.input && n.value == item.name; }))
+                    nextAmbiguous.push_back({item.name,item.input});
+            }
+            const bool changed = observedEpoch != runtime->catalogueEpoch ||
+                nextRecords.size() != records.size() ||
+                !std::equal(nextRecords.begin(), nextRecords.end(), records.begin(), [](const Record& a, const Record& b) {
+                    return a.index == b.index && a.input == b.input && a.name == b.name;
+                });
+            const auto generation = catalogueGeneration + (changed ? 1u : 0u);
+            for (std::size_t i = 0; i < nextRecords.size(); ++i) {
+                auto& item = nextRecords[i];
+                // Unambiguous names keep their context-scoped token. Once ambiguous,
+                // every member (including the first or a lone survivor) is snapshot-scoped.
+                std::string key = "cyaudio.portaudio/1/" + std::to_string(session) + "/" + std::to_string(int(type)) + (item.input ? "/input/" : "/output/");
+                constexpr char hex[] = "0123456789abcdef";
+                for (unsigned char c : item.name) { key += hex[c >> 4]; key += hex[c & 15]; }
+                if (std::any_of(nextAmbiguous.begin(), nextAmbiguous.end(), [&](const Name& n) { return n.input == item.input && n.value == item.name; })) {
+                    unsigned ordinal = 1;
+                    for (std::size_t j = 0; j < i; ++j)
+                        if (nextRecords[j].input == item.input && nextRecords[j].name == item.name) ++ordinal;
+                    key += "/catalogue/" + std::to_string(generation) + "/" + std::to_string(ordinal);
+                }
+                next[i].id = key; item.key = std::move(key);
+            }
+            records.swap(nextRecords); ambiguousNames.swap(nextAmbiguous); out.swap(next);
+            catalogueGeneration = generation; observedEpoch = runtime->catalogueEpoch;
+            return Status::ok;
         } catch (...) { return Status::allocation_failed; }
     }
     Status select(std::string_view key, bool input, PaDeviceIndex& index) const noexcept {

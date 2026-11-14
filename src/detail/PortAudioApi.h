@@ -28,6 +28,9 @@ struct PortAudioRuntime {
     // Control only; recursive for RAII cleanup on failed operations. Never taken by callbacks.
     std::recursive_mutex gate;
     std::size_t leases = 0, streams = 0;
+    // Changes on every successful initialization, even if the new catalogue has the
+    // same names and indices: portable PortAudio cannot distinguish equal-name devices.
+    std::uint64_t catalogueEpoch = 0;
     bool initialized = false;
     // A catalogue refresh is a full terminate + initialize of every host API, run on the
     // control owner. It happens at most once per interval, whatever the caller's scan
