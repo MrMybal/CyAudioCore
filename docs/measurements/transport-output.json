@@ -1,0 +1,161 @@
+{
+  "baselineCommit": "2e954fa64378f6416e78e3607511893a328501b4",
+  "baselineCompilerInputs": "63064bc05933d9b06cb59b60b5990892d50dd96d2f4d5b5537d5c2c8407d0d04",
+  "beforeExecutableSha256": "1ff4b4eab702b9e3061e613bcf40e17196213882011033b90a2e3fa34619b98a",
+  "dependencyCommit": "fda6bd30c5b622795cc08e8bd2750188a6c5a0c0",
+  "dependencyCompilerInputs": "07393a6935e0ad0e5661193196ed550403432ad3a428c42c6952114d701e2326",
+  "benchmarkSha256": "c49d52d01efd01e7bbc093ac93830a9310ce191633fc1617d1c7fc849de846d6",
+  "afterCompilerInputs": "569318dfffbccfa35bee7ff507fc6315bce157718c4a8b6650ae1ba09a058dc5",
+  "trials": 5,
+  "rows": [
+    {
+      "case": "transport32_paused",
+      "frames": 128,
+      "instances": 32,
+      "backend": "automatic",
+      "signature": 0,
+      "beforeNsTrials": [
+        1737.5,
+        1734.375,
+        1712.5,
+        1681.25,
+        1706.25
+      ],
+      "beforeNs": 1712.5,
+      "afterNsTrials": [
+        1681.25,
+        1653.125,
+        1643.75,
+        1650,
+        1681.25
+      ],
+      "afterNs": 1653.125,
+      "speedup": 1.0359168241965973
+    },
+    {
+      "case": "transport32_playing",
+      "frames": 128,
+      "instances": 32,
+      "backend": "automatic",
+      "signature": 189.308785617352,
+      "beforeNsTrials": [
+        4087.5,
+        4146.875,
+        4153.125,
+        4125,
+        4218.75
+      ],
+      "beforeNs": 4146.875,
+      "afterNsTrials": [
+        3431.25,
+        3403.125,
+        3440.625,
+        3425,
+        3437.5
+      ],
+      "afterNs": 3431.25,
+      "speedup": 1.2085610200364298
+    },
+    {
+      "case": "transport32_paused",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "automatic",
+      "signature": 0,
+      "beforeNsTrials": [
+        3065.625,
+        3059.375,
+        3059.375,
+        3068.75,
+        3100
+      ],
+      "beforeNs": 3065.625,
+      "afterNsTrials": [
+        3078.125,
+        3184.375,
+        3109.375,
+        3034.375,
+        3050
+      ],
+      "afterNs": 3078.125,
+      "speedup": 0.9959390862944163
+    },
+    {
+      "case": "transport32_playing",
+      "frames": 1024,
+      "instances": 32,
+      "backend": "automatic",
+      "signature": 170.846122562885,
+      "beforeNsTrials": [
+        6918.75,
+        6906.25,
+        6896.875,
+        7009.375,
+        6909.375
+      ],
+      "beforeNs": 6909.375,
+      "afterNsTrials": [
+        4862.5,
+        4856.25,
+        4843.75,
+        4834.375,
+        4925
+      ],
+      "afterNs": 4856.25,
+      "speedup": 1.4227799227799227
+    }
+  ],
+  "executables": {
+    "before": "1ff4b4eab702b9e3061e613bcf40e17196213882011033b90a2e3fa34619b98a",
+    "after": "4962494c6f03961d01419d4c574e9e826755d04b01acc997494bbd5c4776a1a6"
+  },
+  "acceptedBackground": [
+    {
+      "systemActiveCores": 1.7529796605784032,
+      "dawCorePercent": 0.0
+    },
+    {
+      "systemActiveCores": 1.5375503050756771,
+      "dawCorePercent": 0.0
+    },
+    {
+      "systemActiveCores": 1.690228656562317,
+      "dawCorePercent": 0.0
+    },
+    {
+      "systemActiveCores": 1.822039388442423,
+      "dawCorePercent": 0.404897641876094
+    },
+    {
+      "systemActiveCores": 1.558855921222962,
+      "dawCorePercent": 0.404897641876094
+    }
+  ],
+  "method": "5 fresh-process pairs, alternating before/after order; 64 warmups, 31 batches of 32 calls, median of batch means; group of 32 transports, same committed DSP",
+  "acceptance": "No compiler/linker at boundaries; stable application PID set; application CPU below 1 percent of one core; whole-system average active CPU below 2 logical cores including benchmark",
+  "physicalDevices": false,
+  "compiler": "MSVC 19.40 Release /O2 /fp:strict",
+  "platform": "Windows x64",
+  "scope": "Isolated Core transport; does not measure application wrappers or whole-DAW CPU",
+  "date": "2026-11-14",
+  "cpu": "AMD Ryzen 9 7900X",
+  "outputValidation": "Complete PCM/guards/positions checked in float/double scalar/automatic regressions; benchmark output signatures match, not a full-output hash",
+  "wholeApplicationGainClaimed": false,
+  "latestCompatibilityDependency": {
+    "commit": "ea56508ad3e26d790e491140b7f18a95e4411d5d",
+    "sourceSha256": "6e345bf43d89e9592e5cf2e6bc2b1fdb1beb442778bb742a77d2cbf9d8746a12"
+  },
+  "comparisonDriverSha256": "7bf427ae2fd95801dadaac3ecd22f0da226d92f1576f9769eddc92fdf42c2368",
+  "acceptedPairAttempts": [
+    3,
+    4,
+    5,
+    6,
+    8
+  ],
+  "rejectedPairAttempts": [
+    1,
+    2,
+    7
+  ]
+}

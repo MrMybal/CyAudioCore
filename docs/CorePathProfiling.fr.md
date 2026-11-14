@@ -1,5 +1,9 @@
 # Profilage des chemins CyAudioCore — 13 novembre 2026
 
+Le [correctif ultérieur du transport](TransportOutputOptimization.fr.md) retire
+un effacement redondant dans Core. Ce rapport conserve les mesures de diagnostic
+antérieures et leurs limites.
+
 Le buffer de compatibilité utilisé par CyDAW présente une piste mesurée : ses
 `VectorOps` restent scalaires. Préparer un backend automatique accélère fortement
 son RMS. Dans cette charge isolée, le gain ne représente toutefois qu'environ

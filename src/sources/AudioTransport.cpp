@@ -166,8 +166,8 @@ Status AudioTransport<T>::process(AudioBlock<T> out, UnderrunPolicy policy) noex
             s.loopEnd = command.end;
             break;
         }
-    for (std::size_t ch = 0; ch < out.channels(); ++ch)
-        s.ops.fill(out.channel(ch), T{});
+    // readAt overwrites the reported prefix. Clear only gaps/tails, rather than
+    // writing the entire destination once before the source writes it again.
     Status result = Status::ok;
     std::size_t offset = 0;
     const auto total = s.source->info().frames;
@@ -198,6 +198,8 @@ Status AudioTransport<T>::process(AudioBlock<T> out, UnderrunPolicy policy) noex
             if (status == Status::would_block) {
                 ++s.underruns;
                 if (policy == UnderrunPolicy::silenceAndAdvance) {
+                    for (std::size_t ch = 0; ch < out.channels(); ++ch)
+                        s.ops.fill(out.channel(ch).subspan(offset, n - got), T{});
                     s.frame += n - got;
                     offset += n - got;
                 } else
@@ -212,6 +214,9 @@ Status AudioTransport<T>::process(AudioBlock<T> out, UnderrunPolicy policy) noex
         if (!s.loop && s.frame >= total)
             s.playing = false;
     }
+    if (offset < out.frames())
+        for (std::size_t ch = 0; ch < out.channels(); ++ch)
+            s.ops.fill(out.channel(ch).subspan(offset), T{});
     s.publish();
     return result;
 }

@@ -58,6 +58,19 @@ int main() {
     if (source.prepare(input.block(),48000)!=Status::ok) return 2;
     std::size_t read=0;
     if (source.readAt(0,output.block(),read)!=Status::ok || read!=8) return 3;
+    cyaudio::AudioTransport<float> transport;
+    if (transport.prepare({48000,8,1},source)!=Status::ok ||
+        transport.enqueue({cyaudio::TransportAction::play})!=Status::ok ||
+        transport.process(output.block())!=Status::ok) return 15;
+    for (auto value : output.block().channel(0)) if (value!=.25f) return 16;
+    if (transport.enqueue({cyaudio::TransportAction::pause})!=Status::ok ||
+        transport.process(output.block())!=Status::ok) return 17;
+    for (auto value : output.block().channel(0)) if (value!=0) return 18;
+    if (transport.enqueue({cyaudio::TransportAction::seek,6})!=Status::ok ||
+        transport.enqueue({cyaudio::TransportAction::play})!=Status::ok ||
+        transport.process(output.block())!=Status::ok) return 19;
+    for (std::size_t i=0;i<8;++i)
+        if (output.block().channel(0)[i]!=(i<2?.25f:0.f)) return 20;
     cydsp::DspBus bus{1,1};
     cydsp::DspConnection route{cydsp::graphInputNode,1,cydsp::graphOutputNode,1,1};
     cydsp::MultiBusGraph<float> graph;

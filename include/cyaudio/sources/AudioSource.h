@@ -12,7 +12,9 @@ template <Sample T> class AudioSource {
   public:
     virtual ~AudioSource() = default;
     [[nodiscard]] virtual AudioSourceInfo info() const noexcept = 0;
-    // No I/O/allocation/locks on this call. Short reads zero-pad and report exact frames.
+    // No I/O/allocation/locks on this call. Destination is output-only: overwrite
+    // every reported frame without requiring preinitialized samples.
+    // Short reads zero-pad and report exact frames.
     virtual Status readAt(std::uint64_t, AudioBlock<T>, std::size_t& framesRead) noexcept = 0;
 };
 template <Sample T> class MemoryAudioSource : public AudioSource<T> {

@@ -6,6 +6,7 @@
 #include <cyaudio/CyAudioCore.h>
 #include <numbers>
 #include <stdexcept>
+#include <string>
 #include <thread>
 void runRealtimeAudit(void (*)(void*) noexcept, void*);
 namespace {
@@ -369,6 +370,139 @@ template <Sample T> void transport() {
     require(position.frame == 16 && position.underruns == 1 && out.block().channel(0)[2] == 0,
             "transport underrun advances silent timeline");
 }
+template <Sample T> void transportOutput(CpuBackend backend) {
+    struct Source final : AudioSource<T> {
+        std::size_t limit = 16;
+        Status status = Status::ok;
+        bool invalidCount = false;
+        AudioSourceInfo info() const noexcept override { return {48000, 1000, 2}; }
+        Status readAt(std::uint64_t first, AudioBlock<T> block,
+                      std::size_t& count) noexcept override {
+            if (invalidCount) {
+                count = block.frames() + 1;
+                return Status::ok;
+            }
+            count = std::min(limit, block.frames());
+            for (std::size_t ch = 0; ch < block.channels(); ++ch) {
+                for (std::size_t i = 0; i < count; ++i)
+                    block.channel(ch)[i] = static_cast<T>(first + i + 1 + ch * 2048);
+                if (status == Status::ok || status == Status::would_block ||
+                    status == Status::end_of_stream)
+                    std::fill(block.channel(ch).begin() + count, block.channel(ch).end(), T{});
+            }
+            return status;
+        }
+    } source;
+    AudioTransport<T> player;
+    ok(player.prepare({48000, 16, 2}, source, 8, backend));
+    AudioBuffer<T> storage;
+    ok(storage.resize(2, 20));
+    auto render = [&](std::size_t count, UnderrunPolicy policy = UnderrunPolicy::hold,
+                      Status expected = Status::ok) {
+        for (std::size_t ch = 0; ch < 2; ++ch)
+            std::fill(storage.block().channel(ch).begin(), storage.block().channel(ch).end(), T{-777});
+        struct Audit {
+            AudioTransport<T>& player;
+            AudioBlock<T> output;
+            UnderrunPolicy policy;
+            Status result = Status::not_prepared;
+        } audit{player, storage.block().subBlock(2, count), policy};
+        runRealtimeAudit([](void* p) noexcept {
+            auto& a = *static_cast<Audit*>(p);
+            a.result = a.player.process(a.output, a.policy);
+        }, &audit);
+        if (audit.result != expected)
+            throw std::runtime_error("transport output status, frames=" + std::to_string(count) +
+                                     " expected=" + std::to_string(static_cast<unsigned>(expected)) +
+                                     " actual=" + std::to_string(static_cast<unsigned>(audit.result)));
+        for (std::size_t ch = 0; ch < 2; ++ch)
+            for (std::size_t i = 0; i < 20; ++i)
+                if (i < 2 || i >= count + 2)
+                    require(storage.block().channel(ch)[i] == T{-777}, "transport sub-block guards");
+    };
+    auto samples = [&](std::span<const int> expected) {
+        for (std::size_t ch = 0; ch < 2; ++ch)
+            for (std::size_t i = 0; i < expected.size(); ++i)
+                require(storage.block().channel(ch)[i + 2] ==
+                            (expected[i] ? static_cast<T>(expected[i] + ch * 2048) : T{}),
+                        "transport complete multichannel PCM");
+    };
+    TransportPosition position;
+    for (const std::size_t n : {0u, 1u, 3u, 9u, 16u}) {
+        player.reset();
+        ok(player.enqueue({TransportAction::play}));
+        render(n);
+        std::array<int, 16> expected{};
+        for (std::size_t i = 0; i < n; ++i) expected[i] = static_cast<int>(i + 1);
+        samples({expected.data(), n});
+    }
+    ok(player.enqueue({TransportAction::pause}));
+    render(7);
+    samples(std::array{0, 0, 0, 0, 0, 0, 0});
+    ok(player.position(position));
+    require(position.frame == 16 && !position.playing, "transport pause retains position");
+    ok(player.enqueue({TransportAction::seek, 998}));
+    ok(player.enqueue({TransportAction::play}));
+    render(7);
+    samples(std::array{999, 1000, 0, 0, 0, 0, 0});
+    ok(player.position(position));
+    require(position.frame == 1000 && !position.playing, "transport end stops with silent tail");
+    render(3);
+    samples(std::array{0, 0, 0});
+
+    player.reset();
+    source.limit = 2;
+    source.status = Status::would_block;
+    ok(player.enqueue({TransportAction::play}));
+    render(7);
+    samples(std::array{1, 2, 0, 0, 0, 0, 0});
+    ok(player.position(position));
+    require(position.frame == 2 && position.underruns == 1, "transport short hold");
+    source.limit = 16;
+    source.status = Status::ok;
+    render(3);
+    samples(std::array{3, 4, 5});
+
+    player.reset();
+    source.limit = 2;
+    source.status = Status::end_of_stream;
+    ok(player.enqueue({TransportAction::play}));
+    render(7);
+    samples(std::array{1, 2, 0, 0, 0, 0, 0});
+    ok(player.position(position));
+    require(position.frame == 2 && !position.playing, "transport source ends before advertised length");
+
+    player.reset();
+    source.limit = 2;
+    source.status = Status::would_block;
+    ok(player.enqueue({TransportAction::setLoop, 3, 8, true}));
+    ok(player.enqueue({TransportAction::play}));
+    render(11, UnderrunPolicy::silenceAndAdvance);
+    samples(std::array{4, 5, 0, 0, 0, 4, 5, 0, 0, 0, 4});
+    ok(player.position(position));
+    require(position.frame == 4 && position.underruns == 2, "transport gaps across loop wraps");
+
+    player.reset();
+    ok(player.enqueue({TransportAction::setLoop, 0, 0, false}));
+    ok(player.enqueue({TransportAction::play}));
+    source.status = Status::io_error;
+    render(7, UnderrunPolicy::hold, Status::io_error);
+    samples(std::array{1, 2, 0, 0, 0, 0, 0});
+    ok(player.position(position));
+    require(position.frame == 2 && position.playing, "transport error retains valid prefix");
+    source.limit = 0;
+    render(3, UnderrunPolicy::hold, Status::io_error);
+    samples(std::array{0, 0, 0});
+    source.invalidCount = true;
+    render(3, UnderrunPolicy::hold, Status::invalid_argument);
+    samples(std::array{0, 0, 0});
+    ok(player.position(position));
+    require(position.frame == 2, "transport invalid count does not advance");
+    render(17, UnderrunPolicy::hold, Status::block_too_large);
+    for (std::size_t ch = 0; ch < 2; ++ch)
+        for (auto value : storage.block().channel(ch))
+            require(value == T{-777}, "transport invalid block leaves destination untouched");
+}
 void tempo() {
     TempoMap map;
     const std::array<TempoPoint, 3> points{{{0, 120, 4, 4}, {2, 60, 4, 4}, {8, 90, 3, 4}}};
@@ -390,5 +524,9 @@ void dawRegression() {
     synth<double>();
     transport<float>();
     transport<double>();
+    for (const auto backend : {CpuBackend::scalar, CpuBackend::automatic}) {
+        transportOutput<float>(backend);
+        transportOutput<double>(backend);
+    }
     tempo();
 }

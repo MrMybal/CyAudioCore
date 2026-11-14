@@ -1,5 +1,8 @@
 # Measurements
 
+The subsequent [transport output optimization](TransportOutputOptimization.fr.md)
+removes a redundant clear in the production transport, with PCM regression checks.
+
 See [isolated service path profiling](CorePathProfiling.fr.md) for the subsequent
 Windows campaign covering buffers, callback adaptation, transports, DSP, synthesis,
 plugin calls and worker accounting, with a read-only application header probe.
