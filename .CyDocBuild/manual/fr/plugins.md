@@ -4,14 +4,14 @@ title: Héberger des plugins
 description: Charger CLAP et choisir le cycle de vie du plugin.
 section: Plugins
 order: 5
-sourceRevision: 1
+sourceRevision: 2
 ---
 
 ## Configurer d’abord l’isolation {#load}
 
 Les fournisseurs intégrés CLAP, VST3, LV2 et JSFX utilisent toujours des processus séparés. Les scans sont des workers jetables et chaque instance active possède son worker, éditeur inclus. La découverte de presets CLAP est également isolée. Fournissez un chemin absolu d’exécutable ; son absence retourne `invalid_argument`. Aucun échec ne charge un module tiers dans le moteur.
 
-Compilez `cyaudio_plugin_worker` avec `CYAUDIOCORE_BUILD_PLUGIN_WORKER=ON`, ou fournissez un helper applicatif lié à `CyAudioCore::Plugins`, qui reconnaît `--cydsp-worker <mapping>` et appelle `runPluginWorker`. Son ABI et son protocole version 3 doivent correspondre à la bibliothèque.
+Compilez `cyaudio_plugin_worker` avec `CYAUDIOCORE_BUILD_PLUGIN_WORKER=ON`, ou fournissez un helper applicatif lié à `CyAudioCore::Plugins`, qui reconnaît `--cydsp-worker <mapping>` et appelle `runPluginWorker`. Son ABI et son protocole version 4 doivent correspondre à la bibliothèque.
 
 Cette fonction de contrôle reçoit des chemins absolus et charge le premier descripteur du module choisi. Un navigateur destiné à l’utilisateur doit plutôt lui permettre de sélectionner le descripteur.
 
@@ -31,6 +31,16 @@ cyaudio::Status loadClap(const std::filesystem::path& worker,
     if (status != cyaudio::Status::ok) return status;
     if (plugins.empty()) return cyaudio::Status::unsupported_format;
     return provider->create(module, plugins.front().id, {}, instance);
+}
+
+cyaudio::Status activatePlugin(cyaudio::PluginInstance& instance) {
+    cyaudio::PluginPrepareOptions options;
+    options.sampleRate = 48000;
+    options.maximumFrames = 512;
+    options.sleep.mode = cyaudio::PluginSleepMode::automatic;
+    options.sleep.quietFrames = 2048;
+    options.sleep.silenceThreshold = 0;
+    return instance.activate(options);
 }
 ```
 

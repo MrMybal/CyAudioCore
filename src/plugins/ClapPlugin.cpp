@@ -123,6 +123,7 @@ class ClapBackend final : public PluginBackend, public ClapExtensions {
     std::optional<ClapTrackInfo> track_;
     std::thread::id main_ = std::this_thread::get_id();
     std::atomic<std::uint32_t> requests_{0};
+    std::atomic<std::uint32_t> wakeGeneration_{0};
     const clap_plugin_audio_ports_t* audio_ = nullptr;
     const clap_plugin_note_ports_t* notes_ = nullptr;
     const clap_plugin_params_t* params_ = nullptr;
@@ -198,6 +199,9 @@ class ClapBackend final : public PluginBackend, public ClapExtensions {
     void request(std::uint32_t flag) noexcept {
         // Publish associated callback state before the main-thread acquire/exchange.
         requests_.fetch_or(flag, std::memory_order_release);
+        wakeGeneration_.fetch_add(1, std::memory_order_release);
+        if (callbacks_.wakeAudio)
+            callbacks_.wakeAudio(callbacks_.context);
     }
     bool onMain() const noexcept {
         return main_ == std::this_thread::get_id() && currentAudioPlugin != this;
@@ -458,6 +462,24 @@ class ClapBackend final : public PluginBackend, public ClapExtensions {
     }
     ClapProcessStatus lastProcessStatus() const noexcept override {
         return ClapProcessStatus(processStatus_.load(std::memory_order_acquire));
+    }
+    PluginSleepHint sleepHint() const noexcept override {
+        switch (lastProcessStatus()) {
+        case ClapProcessStatus::sleep:
+            return PluginSleepHint::sleep;
+        case ClapProcessStatus::tail:
+            return requests_.load(std::memory_order_acquire) &
+                           (pluginRestart | pluginLatencyChanged | pluginTailChanged)
+                       ? PluginSleepHint::keepProcessing
+                       : PluginSleepHint::afterTail;
+        case ClapProcessStatus::continueIfNotQuiet:
+            return PluginSleepHint::whenQuiet;
+        default:
+            return PluginSleepHint::keepProcessing;
+        }
+    }
+    std::uint32_t wakeGeneration() const noexcept override {
+        return wakeGeneration_.load(std::memory_order_acquire);
     }
     Status audioConfigurations(std::vector<ClapAudioConfiguration>&) noexcept override;
     Status selectAudioConfiguration(std::uint32_t) noexcept override;

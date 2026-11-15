@@ -154,6 +154,12 @@ class IsolatedBackend final : public PluginBackend, public ClapExtensions {
     bool isolated() const noexcept override {
         return true;
     }
+    PluginSleepInfo sleepInfo() const noexcept override {
+        return worker.sleepInfo();
+    }
+    void wake() noexcept override {
+        worker.wake();
+    }
     Status status() const noexcept override {
         return Status(failure.load(std::memory_order_acquire));
     }

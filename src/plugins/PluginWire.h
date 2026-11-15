@@ -7,10 +7,10 @@
 #include <cstring>
 namespace cyaudio::detail::wire {
 inline constexpr std::uint64_t magic = 0x3150434950534443ull;
-// Version 3: isolated discovery/hosting, bounded portable controls, reverse UI
-// calls, variable-frame split-phase audio and asynchronous audio-owner commands.
+// Version 4 adds prepared sleep policy, wake generations and DSP sleep counters
+// to isolated hosting, reverse UI calls and split-phase audio.
 // Mismatched client/worker binaries refuse to pair.
-inline constexpr std::uint32_t version = 3;
+inline constexpr std::uint32_t version = 4;
 enum class Command : std::uint32_t {
     save = 1,
     load,
@@ -92,6 +92,8 @@ struct Header {
     std::uint32_t format = 0, minimumFrames = 1, frames = 512, events = 1024, channels = 64,
                   payload = 65536, stateBytes = 16 * 1024 * 1024, flags = 0, parentPid = 0;
     double sampleRate = 48000;
+    std::uint32_t sleepMode = 0, quietFrames = 2048;
+    double silenceThreshold = 0;
     std::array<char, 32768> pluginPath{};
     std::array<char, 4096> pluginId{};
     std::array<std::byte, 128> bootSeparation{};
@@ -115,6 +117,8 @@ struct Header {
     std::uint32_t blockFrames = 0, audioOperation = 0;
     std::atomic<std::uint32_t> clientAudioCommand{0}, clientReset{0}, clientAudioStatus{0};
     std::atomic<std::uint32_t> clapProcessStatus{1};
+    std::atomic<std::uint32_t> pluginSleeping{0}, wakeGeneration{0}, sleepGeneration{0},
+        processedBlocks{0}, skippedBlocks{0};
     std::uint32_t audioPortInput = 0, audioPortIndex = 0, audioPortActive = 0, audioPortBits = 0;
     std::atomic<std::uint32_t> audioPortState{0}, audioPortStatus{0};
     std::uint32_t bootMode = 0, initialBytes = 0, reverseTimeoutMs = 2000;
@@ -175,7 +179,9 @@ inline bool valid(const Header& h) noexcept {
         h.minimumFrames > h.frames || !h.frames || h.frames > 65536 || !h.events ||
         h.events > 65536 || !h.channels || h.channels > 256 || h.payload > 16 * 1024 * 1024 ||
         !h.stateBytes || h.stateBytes > 64 * 1024 * 1024 || h.flags > 3 || h.bootMode > 3 ||
-        h.initialBytes > h.stateBytes || !h.reverseTimeoutMs || h.reverseTimeoutMs > 60000)
+        h.sleepMode > 2 || !h.quietFrames || !isFinite(h.silenceThreshold) ||
+        h.silenceThreshold < 0 || h.silenceThreshold > 1 || h.initialBytes > h.stateBytes ||
+        !h.reverseTimeoutMs || h.reverseTimeoutMs > 60000)
         return false;
     return layout(h).total == h.mappingBytes && h.mappingBytes <= 512 * 1024 * 1024;
 }
@@ -192,6 +198,9 @@ inline bool sameConfiguration(const Header& shared, const Header& configured) no
            shared.payload == configured.payload && shared.stateBytes == configured.stateBytes &&
            shared.flags == configured.flags && shared.parentPid == configured.parentPid &&
            shared.sampleRate == configured.sampleRate && shared.bootMode == configured.bootMode &&
+           shared.sleepMode == configured.sleepMode &&
+           shared.quietFrames == configured.quietFrames &&
+           shared.silenceThreshold == configured.silenceThreshold &&
            shared.initialBytes == configured.initialBytes &&
            shared.reverseTimeoutMs == configured.reverseTimeoutMs;
 }

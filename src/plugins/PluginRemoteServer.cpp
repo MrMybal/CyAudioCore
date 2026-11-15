@@ -4,6 +4,9 @@
 namespace cyaudio::detail {
 using namespace rpc;
 RemoteHost::RemoteHost(wire::Header& h, HostSnapshot s) : header(h), snapshot(std::move(s)) {
+    callbacks.wakeAudio = [](void* p) noexcept {
+        static_cast<RemoteHost*>(p)->header.wakeGeneration.fetch_add(1, std::memory_order_release);
+    };
     services.context = this;
     services.name = snapshot.name;
     services.vendor = snapshot.vendor;

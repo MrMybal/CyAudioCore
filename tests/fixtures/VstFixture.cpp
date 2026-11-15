@@ -157,6 +157,21 @@ class Fixture final : public IComponent,
         if (!active_ || !processing_ || p.numInputs != 2 || p.numOutputs != 1 ||
             p.inputs[0].numChannels != 2 || p.inputs[1].numChannels != 1)
             return kResultFalse;
+#if defined(CYAUDIO_SLEEP_VST_FIXTURE)
+        for (int32 bus = 0; bus < p.numInputs; ++bus)
+            for (int32 ch = 0; ch < p.inputs[bus].numChannels; ++ch) {
+                const T* samples;
+                if constexpr (std::is_same_v<T, float>)
+                    samples = p.inputs[bus].channelBuffers32[ch];
+                else
+                    samples = p.inputs[bus].channelBuffers64[ch];
+                bool quiet = true;
+                for (int32 i = 0; i < p.numSamples; ++i)
+                    quiet = quiet && samples[i] == T{};
+                if (quiet != bool(p.inputs[bus].silenceFlags & (uint64(1) << ch)))
+                    return kResultFalse;
+            }
+#endif
         for (int32 frame = 0; frame < p.numSamples; ++frame) {
             if (p.inputParameterChanges)
                 for (int32 i = 0; i < p.inputParameterChanges->getParameterCount(); ++i) {
@@ -260,6 +275,10 @@ class Fixture final : public IComponent,
         return kResultOk;
     }
     int32 PLUGIN_API getBusCount(MediaType media, BusDirection dir) override {
+#if defined(CYAUDIO_SLEEP_VST_FIXTURE)
+        if (media == kEvent)
+            return 0;
+#endif
         return media == kAudio ? (dir == kInput ? 2 : 1) : 1;
     }
     tresult PLUGIN_API getBusInfo(MediaType media, BusDirection dir, int32 i,
@@ -399,7 +418,11 @@ class Fixture final : public IComponent,
                                                                  : nullptr;
     }
 };
+#if defined(CYAUDIO_SLEEP_VST_FIXTURE)
+class Factory final : public IPluginFactory2 {
+#else
 class Factory final : public IPluginFactory {
+#endif
     std::atomic<uint32> refs_{1};
 
   public:
@@ -407,6 +430,13 @@ class Factory final : public IPluginFactory {
         if (!out)
             return kInvalidArgument;
         *out = nullptr;
+#if defined(CYAUDIO_SLEEP_VST_FIXTURE)
+        if (equal(id, IPluginFactory2_iid)) {
+            *out = static_cast<IPluginFactory2*>(this);
+            addRef();
+            return kResultOk;
+        }
+#endif
         if (equal(id, IPluginFactory_iid) || equal(id, FUnknown_iid)) {
             *out = static_cast<IPluginFactory*>(this);
             addRef();
@@ -455,6 +485,19 @@ class Factory final : public IPluginFactory {
         fixture->release();
         return r;
     }
+#if defined(CYAUDIO_SLEEP_VST_FIXTURE)
+    tresult PLUGIN_API getClassInfo2(int32 index, PClassInfo2* info) override {
+        if (index || !info)
+            return kInvalidArgument;
+        *info = {};
+        std::copy_n(fixtureId, 16, info->cid);
+        info->cardinality = PClassInfo::kManyInstances;
+        std::copy_n(kVstAudioEffectClass, sizeof(kVstAudioEffectClass), info->category);
+        std::copy_n("Sleep effect", 13, info->name);
+        std::copy_n("Fx", 3, info->subCategories);
+        return kResultOk;
+    }
+#endif
 };
 } // namespace
 extern "C" SMTG_EXPORT_SYMBOL Steinberg::IPluginFactory* PLUGIN_API GetPluginFactory() {

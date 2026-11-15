@@ -4,7 +4,7 @@ title: Schedule plugin workers
 description: Choose pipeline latency or nonblocking same-cycle submission.
 section: Plugins
 order: 6
-revision: 1
+revision: 2
 parent: plugins
 ---
 
@@ -34,3 +34,36 @@ These calls never wait. Do not spin or sleep around `collect` in a device callba
 ## Control and failure {#control}
 
 Run activation, state RPC, editor operations and health checks outside the callback. Read-only control calls do not consume an audio ticket. Stop audio access before changing layouts or destroying/replacing the instance. On a stall or crash, choose the engine's silence/bypass/recovery policy explicitly. See [lifecycle contracts](doc:lifecycle).
+
+## Automatic sleep {#sleep}
+
+Keep calling the normal audio API. `PluginPrepareOptions::sleep` uses `automatic`
+by default, with 2048 quiet frames and an exact-zero threshold. CLAP follows its
+`sleep`, `continueIfNotQuiet`, `tail` and `continue` statuses. VST3 uses a conservative
+finite-tail policy for declared audio effects without MIDI/event ports, generators,
+instruments, analysers or network categories. Quiet input includes every sidechain.
+Known latency and tail are drained before heuristic suspension.
+
+LV2, JSFX and insufficient contracts remain active automatically. Select
+`PluginSleepMode::whenQuiet` only when the application knows the processor can
+safely be suspended on silence, including an unknown tail. A known infinite tail
+prevents heuristic sleep. An incorrect opt-in can suppress future autonomous audio
+or events. `disabled` keeps processing, as does offline mode. Raising
+`silenceThreshold` above zero explicitly permits discarding quieter signals.
+
+Sleep retains the loaded plugin, editor, control loop and crash surveillance. The
+worker avoids audio copies, submissions and wake calls. Pipelined mode returns the
+last completed audio before the following zero blocks, preserving its block delay.
+Same-cycle submission creates a local ticket for normal collection/discard.
+
+Audio on any input, MIDI/automation/input events, changed transport or a seek,
+native processing/edit requests and `PluginInstance::wake()` resume processing on
+the next audio block. The control thread remains responsible for pumping requests
+and health; `wake()` never runs the plugin on its caller. CLAP stop/start processing
+runs on the audio owner. Native requests carry generations across the process
+boundary, independently of main-thread polling.
+
+Use `sleepInfo()` to inspect `sleeping`, `processedBlocks` and `skippedBlocks`.
+Counters wrap at 32 bits and reset on activation/explicit start. These are block
+counts, not a measurement of project CPU consumption. The low-level `PluginWorker`
+has the same inspection and wake calls. See the [activation example](doc:plugins).

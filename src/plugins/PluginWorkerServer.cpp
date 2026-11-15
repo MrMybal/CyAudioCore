@@ -102,9 +102,15 @@ template <Sample T> class Server {
     std::atomic<std::uint32_t> command{0}, commandStatus{0};
     std::binary_semaphore acknowledged{0};
     bool paused = false; // Audio thread only.
+    std::uint32_t seenWake = 0;
 
     // ---- audio thread ----
     void audio() noexcept {
+        const auto wake = h.wakeGeneration.load(std::memory_order_acquire);
+        if (wake != seenWake) {
+            plugin.wake();
+            seenWake = wake;
+        }
         const auto count = h.inputEvents, used = h.inputBytes, frames = h.blockFrames;
         const auto operation = h.audioOperation;
         Status result =
@@ -148,6 +154,12 @@ template <Sample T> class Server {
         if (auto* ext = plugin.clapExtensions())
             h.clapProcessStatus.store(std::uint32_t(ext->lastProcessStatus()),
                                       std::memory_order_release);
+        const auto sleep = plugin.sleepInfo();
+        h.processedBlocks.store(sleep.processedBlocks, std::memory_order_relaxed);
+        h.skippedBlocks.store(sleep.skippedBlocks, std::memory_order_relaxed);
+        h.sleepGeneration.store(wake, std::memory_order_relaxed);
+        h.pluginSleeping.store(result == Status::ok && operation == 0 && sleep.sleeping ? 1u : 0u,
+                               std::memory_order_release);
         std::uint32_t outputEvents = 0, outputBytes = 0;
         if (result == Status::ok)
             result = writeEvents(&outgoing, reinterpret_cast<Event*>(data + offsets.outputEvents),
@@ -395,6 +407,14 @@ template <Sample T> class Server {
                 op == detail::rpc::Op::selectConfiguration || op == detail::rpc::Op::configure ||
                 op == detail::rpc::Op::refresh || op == detail::rpc::Op::load ||
                 op == detail::rpc::Op::loadContext || op == detail::rpc::Op::preset;
+            // Read-only queries and pump must not wake every sleeping instance.
+            using Op = detail::rpc::Op;
+            if (op == Op::activate || op == Op::deactivate || rebuild || op == Op::flush ||
+                op == Op::track || op == Op::mapping || op == Op::automation ||
+                op == Op::menuAction || op == Op::portActive) {
+                h.wakeGeneration.fetch_add(1, std::memory_order_release);
+                plugin.wake();
+            }
             if (lifecycle || rebuild) {
                 (void)audioCall(AudioCommand::pause);
                 parked = true;
@@ -454,6 +474,8 @@ template <Sample T> class Server {
         Status result = Status::unsupported_format;
         if (request == Command::save)
             return save();
+        h.wakeGeneration.fetch_add(1, std::memory_order_release);
+        plugin.wake();
         if (request == Command::load || request == Command::restart)
             return reconfigure(request == Command::load);
         if (request == Command::openEditor) {
@@ -611,9 +633,14 @@ int runPluginWorker(std::string_view mappingName) noexcept {
             return fail(Status::incompatible_version);
         // One private copy of the launch configuration for the whole run.
         const Limits fixed = limits(h);
-        const PluginPrepareOptions options{h.sampleRate,          h.minimumFrames,
-                                           fixed.frames,          fixed.events,
-                                           bool(fixed.flags & 1), bool(fixed.flags & 2)};
+        const PluginPrepareOptions options{
+            h.sampleRate,
+            h.minimumFrames,
+            fixed.frames,
+            fixed.events,
+            bool(fixed.flags & 1),
+            bool(fixed.flags & 2),
+            {PluginSleepMode(h.sleepMode), h.quietFrames, h.silenceThreshold}};
         Wake audioWake, controlWake;
         if (audioWake.open(mappingName, "-audio", h.audioWake) != Status::ok ||
             controlWake.open(mappingName, "-control", h.controlWake) != Status::ok)

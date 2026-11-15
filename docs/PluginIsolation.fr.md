@@ -57,7 +57,7 @@ Deux possibilités pour fournir le worker :
   les bibliothèques de production restent statiques. Aucun processus n'est lancé
   pendant la configuration, la compilation ou l'installation.
 
-Le worker doit correspondre à l'ABI et au protocole de la bibliothèque (version 3).
+Le worker doit correspondre à l'ABI et au protocole de la bibliothèque (version 4).
 Les anciens workers sont refusés. Cette option n'active ni tests ni mesures et ne
 recherche aucun plugin installé.
 
@@ -159,3 +159,12 @@ Voir [validation CLAP](ClapValidation.md) pour les campagnes exécutées et leur
 
 Le contrat de threads suit les [règles CLAP 1.2.10](https://github.com/free-audio/clap/blob/1.2.10/include/clap/ext/thread-check.h).
 Voir aussi [les résultats de validation de l’isolation](PluginIsolationValidation.md).
+
+## Veille des plugins
+
+La politique automatique, les réveils et les compteurs sont décrits dans le
+[manuel des workers](../Documentation/Documentation.html#/fr/workers/sleep).
+Les plugins restent isolés et chargés pendant la veille. Continuez d'appeler
+l'API audio habituelle et de pomper le contrôle : Core évite les calculs et les
+échanges audio inutiles sans supprimer l'éditeur ni la surveillance des plantages.
+Le protocole 4 exige de reconstruire ensemble bibliothèque et worker.

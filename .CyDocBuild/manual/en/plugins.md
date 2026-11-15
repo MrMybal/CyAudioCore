@@ -4,14 +4,14 @@ title: Host plugins
 description: Load CLAP and select the plugin lifecycle.
 section: Plugins
 order: 5
-revision: 1
+revision: 2
 ---
 
 ## Configure isolation first {#load}
 
 Built-in CLAP, VST3, LV2 and JSFX providers always use separate processes. Scans are disposable workers and each live instance has its own worker, including its editor. CLAP preset discovery is isolated too. Supply an absolute executable path; a missing path returns `invalid_argument`. No failure falls back to loading a foreign module inside the engine.
 
-Build `cyaudio_plugin_worker` with `CYAUDIOCORE_BUILD_PLUGIN_WORKER=ON`, or provide an application helper linked to `CyAudioCore::Plugins` that recognizes `--cydsp-worker <mapping>` and calls `runPluginWorker`. Match its ABI and protocol version 3 to the library.
+Build `cyaudio_plugin_worker` with `CYAUDIOCORE_BUILD_PLUGIN_WORKER=ON`, or provide an application helper linked to `CyAudioCore::Plugins` that recognizes `--cydsp-worker <mapping>` and calls `runPluginWorker`. Match its ABI and protocol version 4 to the library.
 
 This control-thread helper takes absolute paths and loads the first descriptor returned by the chosen module. A user-facing browser should let the user select a descriptor instead.
 
@@ -31,6 +31,16 @@ cyaudio::Status loadClap(const std::filesystem::path& worker,
     if (status != cyaudio::Status::ok) return status;
     if (plugins.empty()) return cyaudio::Status::unsupported_format;
     return provider->create(module, plugins.front().id, {}, instance);
+}
+
+cyaudio::Status activatePlugin(cyaudio::PluginInstance& instance) {
+    cyaudio::PluginPrepareOptions options;
+    options.sampleRate = 48000;
+    options.maximumFrames = 512;
+    options.sleep.mode = cyaudio::PluginSleepMode::automatic;
+    options.sleep.quietFrames = 2048;
+    options.sleep.silenceThreshold = 0;
+    return instance.activate(options);
 }
 ```
 

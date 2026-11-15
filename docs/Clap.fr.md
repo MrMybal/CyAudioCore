@@ -131,9 +131,15 @@ signalés sans annuler l'audio valide. Les informations de transport comprennent
 les positions, la signature et la variation de tempo par échantillon.
 
 Les retours `continue`, `continueIfNotQuiet`, `tail` et `sleep` restent accessibles
-à l'ordonnanceur par `lastProcessStatus()`. CyAudioCore ne supprime pas seul les
-appels futurs : réveil, silence d'entrée, événements et fin de queue appartiennent
-à l'ordonnanceur de l'application. Une erreur de traitement remplit les sorties de zéros.
+par `lastProcessStatus()`. La politique `PluginPrepareOptions::sleep` active par défaut
+la veille automatique : `sleep` permet l'arrêt, `continueIfNotQuiet` exige une durée
+de silence, et `tail` attend une queue finie connue ainsi que la latence déclarée.
+`continue` maintient le traitement. Les workers conservent le dernier bloc produit,
+puis évitent les calculs et échanges audio devenus inutiles. Entrées audio, événements,
+changements de transport, `request_process` et `PluginInstance::wake()` réveillent
+l'instance. `stop_processing`/`start_processing` restent sur le propriétaire audio.
+Voir [la politique commune et ses limites](Plugins.md#automatic-plugin-sleep).
+Une erreur de traitement remplit les sorties de zéros.
 
 L'adaptateur préparé n'alloue ni ne libère, ne verrouille, n'attend et n'accède pas aux
 fichiers. La callback native de log copie au plus 511 octets dans 64 emplacements,
@@ -150,7 +156,7 @@ garde la responsabilité de son propre comportement temps réel.
 ## Worker et plateformes
 
 Les fournisseurs publics et la découverte de presets utilisent obligatoirement un
-worker explicitement configuré. Le protocole version 3 transporte aussi les contrôles
+worker explicitement configuré. Le protocole version 4 transporte aussi les contrôles
 stables de `ClapExtensions` et les notifications applicatives copiées. Les callbacks
 synchrones de menus utilisent un canal inverse borné ; les pointeurs locaux ne
 traversent pas le processus. Un exécuteur de tâches applicatif est refusé ; un

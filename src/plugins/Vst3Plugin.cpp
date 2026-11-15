@@ -192,6 +192,7 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
     PluginHostCallbacks callbacks_;
     std::thread::id main_ = std::this_thread::get_id();
     std::atomic<uint32> references_{1}, requests_{0};
+    std::atomic<std::uint32_t> wakeGeneration_{0};
     SpscQueue<UiEdit> uiToAudio_;
     struct ParameterMirror {
         std::atomic<std::uint32_t> sequence{0}, low{0}, high{0}, dirty{0};
@@ -234,6 +235,9 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
     }
     void request(std::uint32_t flags) noexcept {
         requests_.fetch_or(flags, std::memory_order_relaxed);
+        wakeGeneration_.fetch_add(1, std::memory_order_release);
+        if (callbacks_.wakeAudio)
+            callbacks_.wakeAudio(callbacks_.context);
     }
     const PluginParameter* parameter(std::uint32_t id) const noexcept {
         const auto it =
@@ -427,6 +431,12 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
                 auto& b = buses[i];
                 b.numChannels = int32(blocks[i].channels());
                 b.silenceFlags = 0;
+                if (&buses == &inputBuses_)
+                    for (std::size_t ch = 0; ch < blocks[i].channels() && ch < 64; ++ch)
+                        if (std::all_of(blocks[i].channel(ch).begin(),
+                                        blocks[i].channel(ch).begin() + p.frames,
+                                        [](T sample) { return sample == T{}; }))
+                            b.silenceFlags |= std::uint64_t(1) << ch;
                 for (std::size_t ch = 0; ch < blocks[i].channels(); ++ch)
                     if constexpr (std::same_as<T, float>)
                         pointers32_[offset + ch] = const_cast<T*>(blocks[i].channel(ch).data());
@@ -496,6 +506,10 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
         data.processContext = &context;
         if (processor_->process(data) != kResultOk)
             return Status::io_error;
+        for (std::size_t bus = 0; bus < p.outputs.size(); ++bus)
+            for (std::size_t ch = 0; ch < p.outputs[bus].channels() && ch < 64; ++ch)
+                if (outputBuses_[bus].silenceFlags & (std::uint64_t(1) << ch))
+                    std::fill_n(p.outputs[bus].channel(ch).begin(), p.frames, T{});
         collectOutput(p.outputEvents);
         return Status::ok;
     }
@@ -794,6 +808,25 @@ class VstBackend final : public PluginBackend, public IComponentHandler, public 
             return {};
         const auto tail = processor_->getTailSamples();
         return {processor_->getLatencySamples(), tail, true, true, tail == kInfiniteTail};
+    }
+    PluginSleepHint sleepHint() const noexcept override {
+        const auto& category = description_.plugin.description;
+        // Only declared audio effects without MIDI processing. An unknown category,
+        // instrument, analyser or autonomous generator must remain runnable.
+        return !(requests_.load(std::memory_order_acquire) &
+                 (pluginRestart | pluginLatencyChanged | pluginTailChanged)) &&
+                       !description_.inputs.empty() && !description_.outputs.empty() &&
+                       description_.noteInputs.empty() && description_.noteOutputs.empty() &&
+                       (category == "Fx" || category.starts_with("Fx|")) &&
+                       category.find("Generator") == std::string::npos &&
+                       category.find("Instrument") == std::string::npos &&
+                       category.find("Analyzer") == std::string::npos &&
+                       category.find("Network") == std::string::npos
+                   ? PluginSleepHint::afterTail
+                   : PluginSleepHint::keepProcessing;
+    }
+    std::uint32_t wakeGeneration() const noexcept override {
+        return wakeGeneration_.load(std::memory_order_acquire);
     }
     Status parameterValue(std::uint32_t id, double& value) noexcept override {
         if (!controller_ || !parameter(id))

@@ -20,6 +20,7 @@ void pcmProxyRegression(); void metadataRegression(); void dawFilesRegression();
 void sourcesRegression(); void sourcePolicyRegression();
 #endif
 #if defined(CYAUDIOCORE_TEST_PLUGINS)
+void pluginSleepRegression(const std::filesystem::path&);
 void pluginIsolationRegression(const std::filesystem::path&);
 void pluginRegression(const std::filesystem::path&); void openPluginRegression(const std::filesystem::path&);
 void vstStateRegression(const std::filesystem::path&);
@@ -54,7 +55,7 @@ const Suite suites[] = {
  {"sources", &plain<&sourcesRegression>}, {"sourcePolicy", &plain<&sourcePolicyRegression>},
 #endif
 #if defined(CYAUDIOCORE_TEST_PLUGINS)
- {"plugin", &pluginRegression}, {"openPlugin", &openPluginRegression}, {"vstPlugin", &vstPluginRegression},
+ {"pluginSleep", &pluginSleepRegression}, {"plugin", &pluginRegression}, {"openPlugin", &openPluginRegression}, {"vstPlugin", &vstPluginRegression},
  {"clapExtensions", &clapExtensionsRegression},
  {"vstState", &vstStateRegression}, {"pluginWorker", &pluginWorkerRegression}, {"pluginIsolation", &pluginIsolationRegression},
 #endif

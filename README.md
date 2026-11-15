@@ -34,7 +34,7 @@ Buffers, views and numerical processors come from CyDSP. Device SDKs, codecs and
 - **MIDI:** devices and reconnection, MIDI 1, MPE, UMP/MIDI 2, MIDI-CI and property exchange.
 - **Files and sources:** codecs, metadata, editing PCM proxies, waveform caching, read-ahead playback and background recording.
 - **Transport and instruments:** play, pause, seek, loops, tempo, polyphonic synthesis and CyDSP voice orchestration.
-- **Plugins:** CLAP as the primary format, with explicit VST3/LV2/JSFX alternatives; parameters, states, presets and native editors.
+- **Plugins:** CLAP as the primary format, with explicit VST3/LV2/JSFX alternatives; parameters, states, presets and native editors. Automatic sleep for CLAP and eligible VST3 effects; explicit policies for other processors.
 - **Isolation:** plugin scans and instances run in separate processes. Pipelined mode adds one block; same-cycle mode uses `submit`/`collect`/`discard` with an application scheduler.
 
 ---

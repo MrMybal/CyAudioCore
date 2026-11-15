@@ -4,7 +4,7 @@ title: Ordonnancer les workers de plugins
 description: Choisir le pipeline ou la soumission non bloquante dans le même cycle.
 section: Plugins
 order: 6
-sourceRevision: 1
+sourceRevision: 2
 parent: plugins
 ---
 
@@ -34,3 +34,41 @@ Ces appels n’attendent jamais. N’ajoutez ni boucle active ni sommeil autour 
 ## Contrôle et échec {#control}
 
 Exécutez activation, RPC d’état, opérations d’éditeur et contrôles de santé hors callback. Les appels de contrôle en lecture ne consomment pas de ticket audio. Arrêtez les accès audio avant de changer les dispositions ou détruire/remplacer l’instance. Lors d’un blocage ou crash, choisissez explicitement la politique silence/contournement/rétablissement du moteur. Voir les [contrats de cycle de vie](doc:lifecycle).
+
+## Veille automatique {#sleep}
+
+Continuez d'appeler l'API audio habituelle. `PluginPrepareOptions::sleep` utilise
+`automatic` par défaut, avec 2048 frames de maintien silencieux et un seuil de zéro
+exact. CLAP suit ses statuts `sleep`, `continueIfNotQuiet`, `tail` et `continue`.
+VST3 utilise une politique prudente de queue finie pour les effets audio déclarés,
+sans ports MIDI/événements ni catégorie générateur, instrument, analyseur ou réseau.
+Le silence d'entrée inclut tous les sidechains. Latence et queue connues sont
+entièrement écoulées avant une suspension fondée sur le silence.
+
+LV2, JSFX et les contrats insuffisants restent actifs en mode automatique.
+Sélectionnez `PluginSleepMode::whenQuiet` seulement si l'application sait que le
+processeur peut être suspendu sur silence, y compris avec une queue inconnue.
+Une queue infinie connue empêche cette veille heuristique. Une activation incorrecte
+peut supprimer de futurs sons ou événements autonomes. `disabled` conserve le
+traitement, comme le mode hors ligne. Augmenter `silenceThreshold` au-dessus de zéro
+autorise explicitement la suppression des signaux plus faibles.
+
+La veille conserve le plugin chargé, l'éditeur, le contrôle et la surveillance des
+plantages. Le worker évite les copies audio, soumissions et appels de réveil.
+Le mode pipelined restitue le dernier bloc terminé avant les blocs nuls suivants,
+en conservant son retard d'un bloc. Le mode même cycle crée un ticket local,
+à collecter ou abandonner normalement.
+
+L'audio sur une entrée, les événements MIDI/automation/entrants, un changement de
+transport ou une recherche, les demandes natives de traitement/édition et
+`PluginInstance::wake()` reprennent le traitement au prochain bloc audio.
+Le contrôle continue de pomper les requêtes et la santé ; `wake()` n'exécute jamais
+le plugin sur son appelant. Les appels CLAP stop/start processing restent sur le
+propriétaire audio. Les demandes natives portent des générations à travers le
+processus, indépendamment du polling du thread principal.
+
+`sleepInfo()` expose `sleeping`, `processedBlocks` et `skippedBlocks`. Les compteurs
+bouclent sur 32 bits et repartent de zéro à l'activation/au démarrage explicite.
+Ce sont des nombres de blocs, pas une mesure de consommation CPU du projet.
+Le `PluginWorker` bas niveau expose les mêmes appels d'observation et de réveil.
+Voir l'[exemple d'activation](doc:plugins).

@@ -101,7 +101,7 @@ provider and returns unsupported_backend for this standalone worker.
 The protocol checks magic/version, native ABI/word size/record size, dimensions and
 all packet/payload bounds. It contains no cross-process C++ object or payload
 pointers. Client and worker must be built from the same protocol/target ABI
-(protocol version 3). The client keeps a private copy of the negotiated limits and
+(protocol version 4). The client keeps a private copy of the negotiated limits and
 never takes a bound from the shared header again, which the child can write.
 Memory is bounded by maximumChannelsPerDirection/events/payload/state bytes and
 an overall512 MiB limit. Only the child and owned mapping are cleaned up.
@@ -264,3 +264,49 @@ The original fixtures check float/double reference audio, a separate LV2 sidecha
 sample automation,12 KiB copied SysEx, LV2 background work, state restoration,
 sparse JSFX sliders, prepared allocation auditing, native Windows editors/JSFX
 canvas edits and separate-process audio/state/editor RPC for both formats.
+
+## Automatic plugin sleep
+
+`PluginPrepareOptions::sleep` defaults to `PluginSleepMode::automatic`, a
+2048-frame quiet hold and an exact-zero threshold. CLAP follows its process
+statuses: `sleep` permits suspension, `continueIfNotQuiet` requires quiet outputs,
+`tail` requires a known finite tail plus known latency, and `continue` keeps running.
+The host calls CLAP stop/start processing on its serialized audio owner.
+
+VST3 automatically suspends only declared `Fx` processors with audio inputs/outputs,
+no event ports, no generator/instrument/analyser/network category, known latency
+and a finite known tail. Inputs (including sidechains) and outputs must be quiet;
+the complete latency plus tail and quiet hold must elapse after input activity.
+Input silence flags are supplied and flagged silent outputs are zeroed.
+
+LV2/JSFX, custom backends and other insufficient contracts remain active by default.
+`whenQuiet` is an explicit application assertion that a processor is safe to suspend
+on silence, including with an unknown tail; known finite latency/tails are still
+drained and known infinite tails prevent heuristic sleep. It may suppress future
+autonomous audio/events if the application makes that assertion incorrectly.
+`disabled` always processes. Offline processing never sleeps. Custom native
+backends may opt into the automatic policy through `sleepHint()` and must increment
+`wakeGeneration()` when queued edits or external work require processing.
+
+Keep calling `process()` or `submit`/`collect` normally. A sleeping instance fills
+all requested output samples with zero and clears output events, retaining the
+loaded plugin, editor, control loop and crash surveillance. Its worker skips audio
+copies, mailbox submissions and wake system calls. Pipelined mode delivers the last
+completed block before returning the following silent blocks; its one-block delay
+is unchanged. Same-cycle mode returns a local ticket that can be collected or
+discarded without contacting the child.
+
+Nonquiet input on any bus, input events (including MIDI and automation), transport
+changes/discontinuities, native wake/edit requests and `PluginInstance::wake()`
+resume processing. Wake requests use generations so polling cannot consume a
+pending wake and an in-process request cannot be lost at the sleep boundary.
+A direct low-level `PluginWorker` also exposes `wake()` and `sleepInfo()`.
+`wake()` does not run the plugin from the calling thread: the next audio block
+resumes it. Continue pumping control and health while sleeping.
+
+`PluginInstance::sleepInfo()` returns the current state and wrapping 32-bit
+`processedBlocks`/`skippedBlocks` counters, reset at activation/explicit start.
+They count native DSP calls and avoided blocks, not CPU percentages. Thresholds
+above zero are opt-in and may discard signals below that amplitude. Prepared host
+sleep/wake paths allocate nothing, wait on nothing and perform no file I/O; foreign
+start/stop/process implementations retain their own real-time behavior.

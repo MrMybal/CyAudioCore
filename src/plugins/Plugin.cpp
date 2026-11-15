@@ -1,4 +1,5 @@
 #include "PluginInternal.h"
+#include "PluginSleep.h"
 #include "cyaudio/core/DspTypes.h"
 #include <algorithm>
 #include <atomic>
@@ -77,6 +78,20 @@ struct PluginInstance::State {
     std::vector<Interval> intervals;
     std::int64_t minimumSteadyFrame = -1;
     std::atomic<std::uint32_t> latency{0}, tail{0}, timingFlags{0};
+    std::atomic<std::uint32_t> sleeping{0}, processedBlocks{0}, skippedBlocks{0}, wakeSerial{0};
+    std::uint32_t seenWake = 0, seenBackendWake = 0;
+    std::uint64_t quietInputFrames = 0, quietOutputFrames = 0;
+    detail::PluginTransportHistory transport;
+    PluginEventBuffer sleepEvents;
+    void resetSleep() noexcept {
+        sleeping.store(0, std::memory_order_release);
+        processedBlocks.store(0, std::memory_order_relaxed);
+        skippedBlocks.store(0, std::memory_order_relaxed);
+        quietInputFrames = quietOutputFrames = 0;
+        seenWake = wakeSerial.load(std::memory_order_acquire);
+        seenBackendWake = backend->wakeGeneration();
+        transport = {};
+    }
     void setTiming(PluginTiming t) noexcept {
         latency.store(t.latencyFrames, std::memory_order_relaxed);
         tail.store(t.tailFrames, std::memory_order_relaxed);
@@ -94,7 +109,8 @@ struct PluginInstance::State {
         const auto p = PluginLifecycle(phase.load());
         if (p == PluginLifecycle::processing) {
             detail::PluginAudioScope audio(backend.get());
-            backend->stop();
+            if (!sleeping.load(std::memory_order_acquire))
+                backend->stop();
         }
         backend->closeEditor();
         if (p == PluginLifecycle::active || p == PluginLifecycle::processing)
@@ -142,7 +158,7 @@ Status PluginInstance::activate(const PluginPrepareOptions& o) noexcept {
         return Status::transition_in_progress;
     if (!isFinite(o.sampleRate) || o.sampleRate <= 0 || o.sampleRate > 1000000 ||
         !o.minimumFrames || o.maximumFrames < o.minimumFrames || o.maximumFrames > 1048576 ||
-        !o.maximumEvents || o.maximumEvents > 65536)
+        !o.maximumEvents || o.maximumEvents > 65536 || !detail::validSleepOptions(o.sleep))
         return Status::invalid_spec;
     const auto& d = *description();
     if (o.useFloat64 ? !d.float64 : !d.float32)
@@ -156,6 +172,11 @@ Status PluginInstance::activate(const PluginPrepareOptions& o) noexcept {
         if (total > 32768)
             return Status::invalid_spec;
         state_->intervals.resize(total);
+        if (!state_->backend->isolated() && o.sleep.mode != PluginSleepMode::disabled) {
+            const auto events = state_->sleepEvents.prepare(o.maximumEvents, 65536);
+            if (events != Status::ok)
+                return events;
+        }
     } catch (...) {
         return Status::allocation_failed;
     }
@@ -184,6 +205,7 @@ Status PluginInstance::activate(const PluginPrepareOptions& o) noexcept {
         }
         state_->options = o;
         state_->minimumSteadyFrame = -1;
+        state_->resetSleep();
         state_->setTiming(state_->backend->timing());
         state_->phase.store(std::uint32_t(PluginLifecycle::active), std::memory_order_release);
     }
@@ -196,8 +218,10 @@ Status PluginInstance::start() noexcept {
         return Status::transition_in_progress;
     detail::PluginAudioScope audio(state_->backend.get());
     const auto r = state_->backend->start();
-    if (r == Status::ok)
+    if (r == Status::ok) {
+        state_->resetSleep();
         state_->phase.store(std::uint32_t(PluginLifecycle::processing), std::memory_order_release);
+    }
     return r;
 }
 template <Sample T>
@@ -299,9 +323,99 @@ Status PluginInstance::processImpl(const PluginProcess<T>& p, unsigned operation
     if (p.outputEvents)
         p.outputEvents->reset();
     detail::PluginAudioScope audio(state_->backend.get());
+    const bool native = !state_->backend->isolated() && operation == 0;
+    auto call = p;
+    const bool monitorSleep =
+        native && o.sleep.mode != PluginSleepMode::disabled && !o.offline &&
+        (o.sleep.mode == PluginSleepMode::whenQuiet || state_->backend->clapExtensions() ||
+         state_->backend->sleepHint() != PluginSleepHint::keepProcessing);
+    if (monitorSleep && !call.outputEvents) {
+        state_->sleepEvents.reset();
+        call.outputEvents = &state_->sleepEvents;
+    }
+    bool quietInput = false;
+    std::uint32_t wake = 0, backendWake = 0;
+    if (native) {
+        auto& s = *state_;
+        wake = s.wakeSerial.load(std::memory_order_acquire);
+        backendWake = s.backend->wakeGeneration();
+        const bool changed = s.transport.update(p.transport, p.frames, o.sampleRate) ||
+                             wake != s.seenWake || backendWake != s.seenBackendWake;
+        const bool events = p.inputEvents && p.inputEvents->size();
+        quietInput =
+            monitorSleep && detail::quietPluginAudio(p.inputs, p.frames, o.sleep.silenceThreshold);
+        if (changed || events || !quietInput)
+            s.quietInputFrames = s.quietOutputFrames = 0;
+        if (s.sleeping.load(std::memory_order_relaxed)) {
+            if (!changed && !events && quietInput) {
+                for (const auto& bus : p.outputs)
+                    for (std::size_t ch = 0; ch < bus.channels(); ++ch)
+                        std::fill_n(bus.channel(ch).begin(), p.frames, T{});
+                s.skippedBlocks.store(s.skippedBlocks.load(std::memory_order_relaxed) + 1,
+                                      std::memory_order_relaxed);
+                s.minimumSteadyFrame = p.steadyFrame < 0 ? -1 : p.steadyFrame + p.frames;
+                return Status::ok;
+            }
+            const auto started = s.backend->start();
+            if (started != Status::ok) {
+                for (const auto& bus : p.outputs)
+                    for (std::size_t ch = 0; ch < bus.channels(); ++ch)
+                        std::fill_n(bus.channel(ch).begin(), p.frames, T{});
+                return started;
+            }
+            s.sleeping.store(0, std::memory_order_release);
+        }
+        s.seenWake = wake;
+        s.seenBackendWake = backendWake;
+    }
     const auto r = operation == 1   ? state_->backend->submit(p, *ticket)
                    : operation == 2 ? state_->backend->collect(p, *ticket)
-                                    : state_->backend->process(p);
+                                    : state_->backend->process(call);
+    if (native) {
+        auto& s = *state_;
+        s.processedBlocks.store(s.processedBlocks.load(std::memory_order_relaxed) + 1,
+                                std::memory_order_relaxed);
+        if (r == Status::ok && monitorSleep) {
+            const bool inputEvents = p.inputEvents && p.inputEvents->size();
+            const bool outputEvents = call.outputEvents && call.outputEvents->size();
+            const auto hint = s.backend->sleepHint();
+            const bool quietOutput =
+                quietInput && !inputEvents &&
+                (hint != PluginSleepHint::keepProcessing ||
+                 o.sleep.mode == PluginSleepMode::whenQuiet) &&
+                detail::quietPluginAudio(p.outputs, p.frames, o.sleep.silenceThreshold);
+            s.quietInputFrames =
+                quietInput && !inputEvents
+                    ? std::min(s.quietInputFrames + p.frames, std::uint64_t(1) << 48)
+                    : 0;
+            s.quietOutputFrames =
+                quietOutput && !outputEvents
+                    ? std::min(s.quietOutputFrames + p.frames, std::uint64_t(1) << 48)
+                    : 0;
+            const auto t = timing();
+            const bool explicitSleep = hint == PluginSleepHint::sleep;
+            const bool tailReady = t.tailKnown && t.latencyKnown && !t.infiniteTail &&
+                                   s.quietInputFrames >= std::uint64_t(t.tailFrames) +
+                                                             t.latencyFrames + o.sleep.quietFrames;
+            const bool heuristic =
+                !t.infiniteTail &&
+                ((o.sleep.mode == PluginSleepMode::whenQuiet &&
+                  s.quietInputFrames >= std::uint64_t(o.sleep.quietFrames) +
+                                            (t.latencyKnown ? t.latencyFrames : 0u) +
+                                            (t.tailKnown ? t.tailFrames : 0u)) ||
+                 hint == PluginSleepHint::whenQuiet ||
+                 (hint == PluginSleepHint::afterTail && tailReady));
+            if (quietInput && !inputEvents && !outputEvents &&
+                (explicitSleep || (heuristic && s.quietOutputFrames >= o.sleep.quietFrames &&
+                                   s.quietInputFrames >= o.sleep.quietFrames)) &&
+                wake == s.wakeSerial.load(std::memory_order_acquire) &&
+                backendWake == s.backend->wakeGeneration()) {
+                s.backend->stop();
+                s.sleeping.store(1, std::memory_order_release);
+            }
+        } else
+            s.quietInputFrames = s.quietOutputFrames = 0;
+    }
     if (operation == 0 || (operation == 1 && r == Status::ok))
         state_->minimumSteadyFrame = p.steadyFrame < 0 ? -1 : p.steadyFrame + p.frames;
     if (r != Status::ok) {
@@ -345,7 +459,8 @@ Status PluginInstance::stop() noexcept {
     if (lifecycle() != PluginLifecycle::processing)
         return Status::transition_in_progress;
     detail::PluginAudioScope audio(state_->backend.get());
-    state_->backend->stop();
+    if (!state_->sleeping.exchange(0, std::memory_order_acq_rel))
+        state_->backend->stop();
     state_->phase.store(std::uint32_t(PluginLifecycle::active), std::memory_order_release);
     return Status::ok;
 }
@@ -356,6 +471,7 @@ Status PluginInstance::reset() noexcept {
         return Status::not_prepared;
     detail::PluginAudioScope audio(state_->backend.get());
     const auto r = state_->backend->reset();
+    wake();
     if (r == Status::ok)
         state_->minimumSteadyFrame = -1;
     return r;
@@ -420,6 +536,7 @@ Status PluginInstance::flushAudio(const PluginEventBuffer& in, PluginEventBuffer
         return Status::block_too_large;
     out.reset();
     detail::PluginAudioScope audio(state_->backend.get());
+    wake();
     return state_->backend->flush(in, out);
 }
 Status PluginInstance::saveState(std::vector<std::uint8_t>& out, std::size_t limit) noexcept {
@@ -457,6 +574,21 @@ PluginTiming PluginInstance::timing() const noexcept {
     return {state_->latency.load(std::memory_order_relaxed),
             state_->tail.load(std::memory_order_relaxed), (flags & 1u) != 0, (flags & 2u) != 0,
             (flags & 4u) != 0};
+}
+PluginSleepInfo PluginInstance::sleepInfo() const noexcept {
+    if (!state_)
+        return {};
+    if (state_->backend->isolated())
+        return state_->backend->sleepInfo();
+    return {state_->sleeping.load(std::memory_order_acquire) != 0,
+            state_->processedBlocks.load(std::memory_order_relaxed),
+            state_->skippedBlocks.load(std::memory_order_relaxed)};
+}
+void PluginInstance::wake() noexcept {
+    if (state_) {
+        state_->wakeSerial.fetch_add(1, std::memory_order_release);
+        state_->backend->wake();
+    }
 }
 Status PluginInstance::openEditor(const PluginWindow& w, PluginEditorSize& size) noexcept {
     if (!state_)
@@ -530,7 +662,13 @@ Status PluginInstance::pumpMainThread(std::uint32_t& requests) noexcept {
     if (requests & pluginEditorClosed)
         state_->editor = false;
     // Latency/tail queries follow each format's thread contract, outside process.
-    state_->setTiming(state_->backend->timing());
+    const auto before = timing();
+    const auto next = state_->backend->timing();
+    state_->setTiming(next);
+    if (before.latencyFrames != next.latencyFrames || before.tailFrames != next.tailFrames ||
+        before.latencyKnown != next.latencyKnown || before.tailKnown != next.tailKnown ||
+        before.infiniteTail != next.infiniteTail)
+        wake();
     return state_->backend->status();
 }
 Status PluginInstance::close() noexcept {

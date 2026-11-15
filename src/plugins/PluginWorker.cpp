@@ -1,4 +1,5 @@
 #include "PluginRpc.h"
+#include "PluginSleep.h"
 #include "PluginWire.h"
 #include "cyaudio/core/DspTypes.h"
 #include "cydsp/math/VectorOps.h"
@@ -34,6 +35,9 @@ void configure(Header& h, const PluginWorkerOptions& o, PluginFormat format) noe
     h.stateBytes = o.maximumStateBytes;
     h.flags = (o.processing.useFloat64 ? 1u : 0u) | (o.processing.offline ? 2u : 0u);
     h.sampleRate = o.processing.sampleRate;
+    h.sleepMode = std::uint32_t(o.processing.sleep.mode);
+    h.quietFrames = o.processing.sleep.quietFrames;
+    h.silenceThreshold = o.processing.sleep.silenceThreshold;
     h.parentPid = processId();
     h.mappingBytes = layout(h).total;
 }
@@ -75,6 +79,9 @@ struct PluginWorker::State {
     std::atomic<std::uint32_t> alive{1};
     std::uint64_t sequence = 0;
     bool previous = false;
+    bool previousVirtual = false, pendingVirtual = false;
+    std::atomic<std::uint32_t> localSkipped{0};
+    detail::PluginTransportHistory transport;
     std::uint64_t pending = 0;
     std::uint32_t pendingFrames = 0;
     bool flushPending = false;
@@ -221,6 +228,7 @@ struct PluginWorker::State {
         }
         if (command != Command::remote) {
             previous = false;
+            previousVirtual = pendingVirtual = false;
             pending = 0;
             header->audioState.store(0, std::memory_order_release);
         }
@@ -241,8 +249,27 @@ struct PluginWorker::State {
         const auto status = header->controlStatus;
         refreshTiming();
         header->controlState.store(0, std::memory_order_release);
+        if (!status && (command == Command::load || command == Command::restart)) {
+            localSkipped.store(0, std::memory_order_relaxed);
+            transport = {};
+        }
         return status <= std::uint32_t(Status::disconnected) ? Status(status)
                                                              : Status::invalid_argument;
+    }
+    template <Sample T> bool canSleep(const PluginProcess<T>& p) noexcept {
+        if (transport.update(p.transport, p.frames, options.processing.sampleRate))
+            header->wakeGeneration.fetch_add(1, std::memory_order_release);
+        return options.processing.sleep.mode != PluginSleepMode::disabled &&
+               !options.processing.offline &&
+               header->pluginSleeping.load(std::memory_order_acquire) &&
+               header->sleepGeneration.load(std::memory_order_relaxed) ==
+                   header->wakeGeneration.load(std::memory_order_acquire) &&
+               !header->clientAudioCommand.load(std::memory_order_acquire) &&
+               !header->clientReset.load(std::memory_order_acquire) &&
+               header->audioPortState.load(std::memory_order_acquire) != 1 &&
+               (!p.inputEvents || !p.inputEvents->size()) &&
+               detail::quietPluginAudio(p.inputs, p.frames,
+                                        options.processing.sleep.silenceThreshold);
     }
 };
 PluginWorker::PluginWorker() = default;
@@ -363,6 +390,23 @@ Status PluginWorker::launchMode(const std::filesystem::path& executable, PluginF
 const PluginWorkerInfo* PluginWorker::info() const noexcept {
     return state_ ? &state_->info : nullptr;
 }
+PluginSleepInfo PluginWorker::sleepInfo() const noexcept {
+    if (!state_)
+        return {};
+    const auto& h = *state_->header;
+    return {state_->alive.load(std::memory_order_acquire) != 0 &&
+                h.pluginSleeping.load(std::memory_order_acquire) != 0 &&
+                h.sleepGeneration.load(std::memory_order_relaxed) ==
+                    h.wakeGeneration.load(std::memory_order_acquire) &&
+                h.audioState.load(std::memory_order_acquire) != 1,
+            h.processedBlocks.load(std::memory_order_relaxed),
+            h.skippedBlocks.load(std::memory_order_relaxed) +
+                state_->localSkipped.load(std::memory_order_relaxed)};
+}
+void PluginWorker::wake() noexcept {
+    if (state_)
+        state_->header->wakeGeneration.fetch_add(1, std::memory_order_release);
+}
 template <Sample T>
 Status PluginWorker::processImpl(const PluginProcess<T>& p,
                                  PluginWorkerBlockResult& result) noexcept {
@@ -424,6 +468,7 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
     bool reply = false;
     std::uint32_t replyEvents = 0, replyBytes = 0;
     const auto state = h.audioState.load(std::memory_order_acquire);
+    const bool skip = state != 1 && s.canSleep(p);
     if (state == 2) {
         // Each reply field is fetched exactly once and checked against private limits.
         const auto replySequence = h.sequence;
@@ -442,7 +487,7 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
     // The worker leaves the mailbox alone in states 0 and 2, so the input half is
     // written before the reply is copied out. Output buffers may therefore alias
     // input buffers without a staging copy.
-    const bool submit = state != 1;
+    const bool submit = state != 1 && !skip;
     std::uint32_t inputEvents = 0, inputBytes = 0;
     if (submit) {
         (void)writeEvents(p.inputEvents,
@@ -479,6 +524,11 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
             result.receivedSequence = sequence - 1;
         }
     }
+    if (s.previousVirtual) {
+        silence();
+        result.received = true;
+        result.receivedSequence = sequence - 1;
+    }
     if (!result.received)
         silence(); // Only a block without a usable reply is cleared.
     result.missedDeadline = s.previous && !result.received;
@@ -498,6 +548,13 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
         result.submitted = true;
         result.submittedSequence = sequence;
     }
+    if (skip) {
+        h.audioState.store(0, std::memory_order_release);
+        s.localSkipped.fetch_add(1, std::memory_order_relaxed);
+        result.submitted = true;
+        result.submittedSequence = sequence;
+    }
+    s.previousVirtual = skip;
     s.previous = true;
     if (received != Status::ok)
         return received;
@@ -572,6 +629,16 @@ Status PluginWorker::exchange(const PluginProcess<T>& p, std::uint64_t& ticket,
             silence();
             return Status::would_block;
         }
+        if (s.canSleep(p)) {
+            s.pending = ++s.sequence;
+            s.pendingFrames = p.frames;
+            s.pendingVirtual = true;
+            ticket = s.pending;
+            h.audioState.store(0, std::memory_order_release);
+            s.localSkipped.fetch_add(1, std::memory_order_relaxed);
+            return Status::ok;
+        }
+        s.pendingVirtual = false;
         // A discarded cycle may have completed since discard(): overwrite it only
         // after observing ownership returned from the child.
         std::uint32_t count = 0, bytes = 0;
@@ -607,6 +674,12 @@ Status PluginWorker::exchange(const PluginProcess<T>& p, std::uint64_t& ticket,
     }
     if (!ticket || ticket != s.pending || p.frames != s.pendingFrames)
         return Status::invalid_argument;
+    if (s.pendingVirtual) {
+        silence();
+        s.pending = 0;
+        s.pendingVirtual = false;
+        return Status::ok;
+    }
     if (state != 2) {
         silence();
         return Status::would_block;
@@ -658,6 +731,7 @@ Status PluginWorker::discard(std::uint64_t t) noexcept {
     if (!t || t != state_->pending)
         return Status::invalid_argument;
     state_->pending = 0;
+    state_->pendingVirtual = false;
     return Status::ok;
 }
 Status PluginWorker::poll() noexcept {
@@ -889,6 +963,9 @@ Status detail::PluginRemoteAccess::preparation(PluginWorker& w,
         return Status::invalid_spec;
     s.options.processing = o;
     s.previous = false;
+    s.previousVirtual = s.pendingVirtual = false;
+    s.localSkipped.store(0, std::memory_order_relaxed);
+    s.transport = {};
     s.pending = 0;
     s.flushPending = false;
     s.info.pipelineLatencyFrames =
@@ -905,6 +982,12 @@ Status detail::PluginRemoteAccess::audioCommand(PluginWorker& w, std::uint32_t c
         return Status::invalid_argument;
     s.pending = 0;
     s.previous = false;
+    s.previousVirtual = s.pendingVirtual = false;
+    s.header->wakeGeneration.fetch_add(1, std::memory_order_release);
+    if (command == 2) {
+        s.localSkipped.store(0, std::memory_order_relaxed);
+        s.transport = {};
+    }
     s.flushPending = false;
     // Commands are ordered by the serialized audio owner. A following start may
     // coalesce an unconsumed stop; start always performs the requested stop first.
@@ -937,6 +1020,7 @@ Status detail::PluginRemoteAccess::audioPort(PluginWorker& w, bool input, std::u
     h.audioPortIndex = index;
     h.audioPortActive = std::uint32_t(active);
     h.audioPortBits = bits;
+    h.wakeGeneration.fetch_add(1, std::memory_order_release);
     h.audioPortState.store(1, std::memory_order_seq_cst);
     if (h.audioSleeping.load(std::memory_order_seq_cst))
         s.audioWake.signal();
@@ -997,6 +1081,7 @@ Status detail::PluginRemoteAccess::flushAudio(PluginWorker& w, const PluginEvent
         s.pending = ++s.sequence;
         s.pendingFrames = s.options.processing.maximumFrames;
         s.flushPending = true;
+        s.previous = s.previousVirtual = s.pendingVirtual = false;
         h.sequence = s.pending;
         h.blockFrames = s.pendingFrames;
         h.audioOperation = 1;

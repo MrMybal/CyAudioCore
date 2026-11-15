@@ -18,7 +18,7 @@ Preparation, scanning, loading, file/device access, worker lifecycle and native
 editor operations run on control/UI threads. Prepared audio exchanges use bounded
 storage and ownership queues; foreign plugins/scripts retain their own behavior.
 Built-in public plugin providers always use a separate process per instance and
-isolated disposable scanning. The pointer-free worker protocol is version 3.
+isolated disposable scanning. The pointer-free worker protocol is version 4.
 Pipelined processing retains one block; split-phase same-cycle processing exposes
 nonblocking submission, collection and deadline discard with variable block sizes.
 Application graph scheduling and OS privilege restriction remain separate work.

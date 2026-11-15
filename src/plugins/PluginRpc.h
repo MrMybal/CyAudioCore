@@ -52,10 +52,12 @@ template <class A> void fields(A& a, const PluginDescription& v) {
       v.float32, v.float64);
 }
 template <class A> void fields(A& a, PluginPrepareOptions& v) {
-    a(v.sampleRate, v.minimumFrames, v.maximumFrames, v.maximumEvents, v.useFloat64, v.offline);
+    a(v.sampleRate, v.minimumFrames, v.maximumFrames, v.maximumEvents, v.useFloat64, v.offline,
+      v.sleep.mode, v.sleep.quietFrames, v.sleep.silenceThreshold);
 }
 template <class A> void fields(A& a, const PluginPrepareOptions& v) {
-    a(v.sampleRate, v.minimumFrames, v.maximumFrames, v.maximumEvents, v.useFloat64, v.offline);
+    a(v.sampleRate, v.minimumFrames, v.maximumFrames, v.maximumEvents, v.useFloat64, v.offline,
+      v.sleep.mode, v.sleep.quietFrames, v.sleep.silenceThreshold);
 }
 template <class A> void fields(A& a, ClapColor& v) {
     a(v.alpha, v.red, v.green, v.blue);

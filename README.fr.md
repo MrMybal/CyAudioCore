@@ -34,7 +34,7 @@ Les buffers, vues et traitements numériques sont ceux de CyDSP. Les SDK de pér
 - **MIDI** : périphériques et reconnexion, MIDI 1, MPE, UMP/MIDI 2, MIDI-CI et échange de propriétés.
 - **Fichiers et sources** : codecs, métadonnées, proxy PCM pour l’édition, cache de formes d’onde, lecture anticipée et enregistrement en arrière-plan.
 - **Transport et instruments** : lecture, pause, recherche, boucles, tempo, synthèse polyphonique et orchestration des voix CyDSP.
-- **Plugins** : CLAP principal, VST3/LV2/JSFX sur choix explicite ; paramètres, états, presets et éditeurs natifs.
+- **Plugins** : CLAP principal, VST3/LV2/JSFX sur choix explicite ; paramètres, états, presets et éditeurs natifs. Veille automatique CLAP et effets VST3 compatibles ; politiques explicites pour les autres processeurs.
 - **Isolation** : scans et instances de plugins dans des processus séparés. Le mode pipelined ajoute un bloc ; le mode même cycle utilise `submit`/`collect`/`discard` avec un ordonnanceur applicatif.
 
 ---

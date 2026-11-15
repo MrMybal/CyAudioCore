@@ -12,7 +12,7 @@ struct PluginWorkerOptions {
 struct PluginWorkerInfo {
     std::vector<std::uint32_t> inputChannels, outputChannels;
     PluginTiming pluginTiming;
-    std::uint32_t pipelineLatencyFrames = 0, protocolVersion = 3;
+    std::uint32_t pipelineLatencyFrames = 0, protocolVersion = 4;
 };
 struct PluginWorkerBlockResult {
     std::uint64_t submittedSequence = 0, receivedSequence = 0;
@@ -38,6 +38,8 @@ class PluginWorker {
                   const std::filesystem::path& plugin, std::string_view id,
                   const PluginWorkerOptions& = {}) noexcept;
     const PluginWorkerInfo* info() const noexcept;
+    PluginSleepInfo sleepInfo() const noexcept;
+    void wake() noexcept;
     Status process(const PluginProcess<float>&, PluginWorkerBlockResult&) noexcept;
     Status process(const PluginProcess<double>&, PluginWorkerBlockResult&) noexcept;
     Status submit(const PluginProcess<float>&, std::uint64_t& ticket) noexcept;

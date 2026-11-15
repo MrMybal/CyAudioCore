@@ -189,10 +189,25 @@ class PluginEventBuffer {
     std::vector<std::uint8_t> bytes_;
     std::size_t count_ = 0, used_ = 0;
 };
+enum class PluginSleepMode { automatic, disabled, whenQuiet };
+// automatic follows CLAP's process status or a finite-tail VST3 effect contract.
+// whenQuiet explicitly asserts that an otherwise unknown processor is safe to
+// suspend after silence. Known infinite tails are never suspended heuristically.
+struct PluginSleepOptions {
+    PluginSleepMode mode = PluginSleepMode::automatic;
+    std::uint32_t quietFrames = 2048;
+    double silenceThreshold = 0; // Exact digital silence by default; finite [0, 1].
+};
+struct PluginSleepInfo {
+    bool sleeping = false;
+    std::uint32_t processedBlocks = 0, skippedBlocks = 0; // Wrapping counters.
+};
+enum class PluginSleepHint { keepProcessing, whenQuiet, afterTail, sleep };
 struct PluginPrepareOptions {
     double sampleRate = 48000;
     std::uint32_t minimumFrames = 1, maximumFrames = 512, maximumEvents = 1024;
     bool useFloat64 = false, offline = false;
+    PluginSleepOptions sleep;
 };
 template <Sample T> struct PluginProcess {
     std::span<const AudioBlock<const T>> inputs;
@@ -237,6 +252,9 @@ struct PluginHostCallbacks {
     // the same live gestures/values through PluginProcess::outputEvents.
     void (*edited)(void*, const PluginEvent&) noexcept = nullptr;
     const ClapHostServices* clap = nullptr; // Copied at create(); see ClapExtensions.h.
+    // May run on any plugin thread. Only signal an atomic wake request here; never
+    // re-enter the instance. Isolated providers use this inside the worker only.
+    void (*wakeAudio)(void*) noexcept = nullptr;
 };
 // Original provider boundary for separately supplied licensed/native formats.
 // Control/UI functions run on the creating UI thread; start/stop/reset/process
@@ -252,6 +270,18 @@ class PluginBackend {
     virtual bool isolated() const noexcept {
         return false;
     }
+    // Native opt-in. Hints run on audio; the generation must be thread-safe and
+    // change whenever queued edits/external work require another process call.
+    virtual PluginSleepHint sleepHint() const noexcept {
+        return PluginSleepHint::keepProcessing;
+    }
+    virtual std::uint32_t wakeGeneration() const noexcept {
+        return 0;
+    }
+    virtual PluginSleepInfo sleepInfo() const noexcept {
+        return {};
+    }
+    virtual void wake() noexcept {}
     virtual Status submit(const PluginProcess<float>&, std::uint64_t&) noexcept {
         return Status::unsupported_format;
     }
@@ -366,6 +396,8 @@ class PluginInstance {
                      std::size_t maximumBytes = 64 * 1024 * 1024) noexcept;
     Status loadState(std::span<const std::uint8_t>) noexcept; // Inactive, bounded by 64 MiB.
     PluginTiming timing() const noexcept;                     // Cached during activate/pump.
+    PluginSleepInfo sleepInfo() const noexcept; // Lock-free snapshot; counters may wrap.
+    void wake() noexcept; // Thread-safe, allocation-free request; resumes on next audio block.
     Status openEditor(const PluginWindow&, PluginEditorSize&) noexcept;
     Status resizeEditor(PluginEditorSize&) noexcept;
     Status scaleEditor(double) noexcept;
