@@ -1,6 +1,7 @@
 /build/
 /out/
 /.vs/
+/AGENTS.md
 __pycache__/
 *.user
 /.CyDocBuild/internal/build/
