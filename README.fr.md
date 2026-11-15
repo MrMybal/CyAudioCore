@@ -1,7 +1,7 @@
 <table width="100%">
   <tr>
     <td width="300" align="left" valign="top">
-      <a href="Documentation/Documentation.html#/fr/overview">Manuel</a><br>
+      <a href="https://mrmybal.github.io/CyAudioCore/#/fr/overview">Manuel</a><br>
       <a href="https://github.com/MrMybal/CyAudioCore">Dépôt</a><br><br>
       <sub>README</sub><br>
       <a href="README.md">English</a> · <a href="README.fr.md">Français</a>
@@ -77,7 +77,7 @@ La configuration ne télécharge aucune dépendance. Les bibliothèques de produ
 
 Les fournisseurs intégrés de plugins exigent un chemin absolu de worker dans `PluginIsolationOptions`. Le worker doit correspondre à l’ABI et au protocole de la bibliothèque. L’application gère les échéances audio ; un processus séparé isole les plantages sans garantir le temps d’exécution du code tiers.
 
-Voir la [sélection miniaudio/PortAudio et les dépendances des backends](Documentation/Documentation.html#/fr/audio/providers), les [contrats CLAP](Documentation/Documentation.html#/fr/clap) et la [configuration des workers](Documentation/Documentation.html#/fr/workers).
+Voir la [sélection miniaudio/PortAudio et les dépendances des backends](https://mrmybal.github.io/CyAudioCore/#/fr/audio/providers), les [contrats CLAP](https://mrmybal.github.io/CyAudioCore/#/fr/clap) et la [configuration des workers](https://mrmybal.github.io/CyAudioCore/#/fr/workers).
 
 ---
 
@@ -106,7 +106,7 @@ CyAudioCore utilise la [licence MIT](LICENSE). Les dépendances conservent leurs
 
 ## Références et liens
 
-- [Manuel](Documentation/Documentation.html#/fr/overview)
+- [Manuel](https://mrmybal.github.io/CyAudioCore/#/fr/overview)
 - [Architecture](docs/Architecture.md)
 - [Dépôt des sources](https://github.com/MrMybal/CyAudioCore)
 - [Suivi des problèmes](https://github.com/MrMybal/CyAudioCore/issues)

@@ -34,3 +34,28 @@ together when changing dependencies. They are copied into `DocData/assets/licens
 The current generator has a build step that refreshes its own `dist/viewer.css`.
 Use the installed package in `internal/build`, not the neighboring CyDoc checkout,
 to keep generation writes inside this workspace.
+
+## GitHub Pages
+
+The hosted reader is <https://mrmybal.github.io/CyAudioCore/>. Its hash routes are
+`#/en/overview` and `#/fr/overview`; `Documentation.html` remains an entry point.
+The installed, offline `Documentation/` export is unchanged by hosting.
+
+After generating and checking the manual, prepare the static site:
+
+```sh
+node .CyDocBuild/build.mjs --check
+node .CyDocBuild/export-pages.mjs
+```
+
+The exporter prints a fresh directory under `build/github-pages`. It contains the
+complete generated manual, a byte-identical `index.html` and `.nojekyll`. Inspect
+and scan this tree before committing its contents to the dedicated `gh-pages`
+branch. Publish that branch's root (`/`) through the repository's Pages settings.
+Do not copy the repository root, authoring workspace or build directory to Pages.
+Update the deployment branch after each manual change; pushing `main` alone does
+not update the hosted manual. No custom workflow or remote build is required.
+
+GitHub runs its managed Pages deployment even for a prebuilt branch source.
+See [GitHub's publishing-source documentation](https://docs.github.com/en/pages/getting-started-with-github-pages/configuring-a-publishing-source-for-your-github-pages-site).
+The export command performs no Git operations, network access or deployment.

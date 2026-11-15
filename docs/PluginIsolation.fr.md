@@ -163,7 +163,7 @@ Voir aussi [les résultats de validation de l’isolation](PluginIsolationValida
 ## Veille des plugins
 
 La politique automatique, les réveils et les compteurs sont décrits dans le
-[manuel des workers](../Documentation/Documentation.html#/fr/workers/sleep).
+[manuel des workers](https://mrmybal.github.io/CyAudioCore/#/fr/workers/sleep).
 Les plugins restent isolés et chargés pendant la veille. Continuez d'appeler
 l'API audio habituelle et de pomper le contrôle : Core évite les calculs et les
 échanges audio inutiles sans supprimer l'éditeur ni la surveillance des plantages.

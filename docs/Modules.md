@@ -1,8 +1,9 @@
 # CyAudioCore modules
 
-Start with the [English manual](../Documentation/Documentation.html#/en/overview)
-or [French manual](../Documentation/Documentation.html#/fr/overview) for setup,
-audio/MIDI, files and plugin workflows. Open the HTML with its complete DocData folder.
+Start with the [English manual](https://mrmybal.github.io/CyAudioCore/#/en/overview)
+or [French manual](https://mrmybal.github.io/CyAudioCore/#/fr/overview) for setup,
+audio/MIDI, files and plugin workflows. An offline copy is also installed with its
+complete DocData folder.
 
 | Target | Scope |
 | --- | --- |

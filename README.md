@@ -1,7 +1,7 @@
 <table width="100%">
   <tr>
     <td width="300" align="left" valign="top">
-      <a href="Documentation/Documentation.html#/en/overview">Manual</a><br>
+      <a href="https://mrmybal.github.io/CyAudioCore/#/en/overview">Manual</a><br>
       <a href="https://github.com/MrMybal/CyAudioCore">Repository</a><br><br>
       <sub>README</sub><br>
       <a href="README.md">English</a> · <a href="README.fr.md">Français</a>
@@ -77,7 +77,7 @@ Configuration never downloads dependencies. Production libraries are static; tes
 
 Built-in plugin providers require an absolute worker path in `PluginIsolationOptions`. The worker must match the library ABI and protocol. The application manages audio deadlines; a separate process isolates crashes without guaranteeing third-party execution time.
 
-See [miniaudio/PortAudio selection and backend dependencies](Documentation/Documentation.html#/en/audio/providers), [CLAP contracts](Documentation/Documentation.html#/en/clap) and [worker configuration](Documentation/Documentation.html#/en/workers).
+See [miniaudio/PortAudio selection and backend dependencies](https://mrmybal.github.io/CyAudioCore/#/en/audio/providers), [CLAP contracts](https://mrmybal.github.io/CyAudioCore/#/en/clap) and [worker configuration](https://mrmybal.github.io/CyAudioCore/#/en/workers).
 
 ---
 
@@ -106,7 +106,7 @@ CyAudioCore uses the [MIT license](LICENSE). Dependencies retain their own terms
 
 ## References and links
 
-- [Manual](Documentation/Documentation.html#/en/overview)
+- [Manual](https://mrmybal.github.io/CyAudioCore/#/en/overview)
 - [Architecture](docs/Architecture.md)
 - [Source repository](https://github.com/MrMybal/CyAudioCore)
 - [Issue tracker](https://github.com/MrMybal/CyAudioCore/issues)
