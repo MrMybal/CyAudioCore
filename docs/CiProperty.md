@@ -1,4 +1,4 @@
-> Ownership update: audio services now belong to CyAudioCore (`cyaudio`); CyDSP supplies the numerical processing. Older validation entries describe the pre-split snapshot, not this version. See [Validation](Validation.md) and [migration](Migration.fr.md).
+> CyAudioCore (`cyaudio`) provides audio services and uses CyDSP for numerical processing. Historical validation entries retain their original scope; see [Validation](Validation.md).
 
 # MIDI-CI Property Exchange
 

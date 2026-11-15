@@ -1,0 +1,144 @@
+{
+  "name": "CyDoc",
+  "version": "0.1.0",
+  "repository": "https://github.com/MrMybal/CyDoc",
+  "revision": "93f64486d61dae27a94ae1e5a05a20f6edd99914",
+  "license": "MIT",
+  "buildDependencies": {
+    "marked": "17.0.6",
+    "prismjs": "1.30.0",
+    "esbuild": "0.25.12",
+    "@esbuild/win32-x64": "0.25.12"
+  },
+  "files": {
+    "LICENSE": {
+      "sha256": "60aaa0ed2087332acbaee219c088240f5ddda7e7fe393ad5c162b8c617e62bf0"
+    },
+    "dist/icons.js": {
+      "sha256": "9395e2eddd2b57ef6f5152b578680873903bdb554573f975319700d71a020b7c"
+    },
+    "dist/index.js": {
+      "sha256": "da3f372f884a2e9bbbdd851e3c23f689658340c694294fc18f15077faf7c3f0e"
+    },
+    "dist/modules/gallery.js": {
+      "sha256": "504592178d205d544590f7e50e3c1982aaad56a8d95ee30761f5c2bc5e65e41d"
+    },
+    "dist/modules/gif-decode.js": {
+      "sha256": "8c01c00f5cfeb93a5cfcced0097d28c9221725b1a456916ec8a59a1dc8aa1eb7"
+    },
+    "dist/modules/gif.js": {
+      "sha256": "d3119f3a2226bf38ba6b773d3e14506e40ccd4cb9e856f1bee181b77e0285ce3"
+    },
+    "dist/modules/graph.js": {
+      "sha256": "9cdbeaeea2d894af0a88647af99bbd1d475f7c2af8e3afbb7ecc5c0f35ff60be"
+    },
+    "dist/modules/image.js": {
+      "sha256": "c91498797feab38ec410aee55d1e0b75719c45cb1e6eb85e551022a6a5f8a42a"
+    },
+    "dist/modules/mesh-assets.js": {
+      "sha256": "43305943312e8069587e9ba69f0b0b14e74b19eb26b0b319cdcbeb8df972470f"
+    },
+    "dist/modules/mesh.js": {
+      "sha256": "677e695b1124359dff848c16c2a7923f16306e1150138e3ebb238aa031230763"
+    },
+    "dist/modules/shared.js": {
+      "sha256": "c0835a96e154565d181f7db323130ec8df4df82e3e0e7face2f1fdc07908a461"
+    },
+    "dist/modules/video.js": {
+      "sha256": "f89a47d77609797adc6e3367b2ea76f71b32f5012c8959961a6b24daf96fa357"
+    },
+    "dist/navigation.js": {
+      "sha256": "1d131296c2f890b30eed98c83a15f3d26a2b475cb9386c6b9ddf06506192075c"
+    },
+    "dist/reader-tools.js": {
+      "sha256": "111a8985f787b0873cc858efdd401e06a84caf4d56338b3b1807a3e568d9c18e"
+    },
+    "dist/reading-view.js": {
+      "sha256": "2b03596dbb57dc26678878a5dfbf0b3cc9105d0a6f9d8339a02fecef857c9427"
+    },
+    "dist/themes.js": {
+      "sha256": "e8d28cd05fe3b08fbad542f77e818d625e45852171ba87a362e77ea5c97f8f96"
+    },
+    "dist/tooltips.js": {
+      "sha256": "8162b5249a4fdf7dd5f731328a732e4adc2441db2a33611a7bee8c17dc4bab71"
+    },
+    "dist/types.js": {
+      "sha256": "8e609bb71c20b858c77f0e9f90bb1319db8477b13f9f965f1a1e18524bf50881"
+    },
+    "dist/viewer.js": {
+      "sha256": "f0771885178b5ad7556bb4ca000ede871441af34072fdeb7278f6f77635bda98"
+    },
+    "src/viewer.css": {
+      "sha256": "0cd7fdce319cf0d1c2728ffeb53e45ffe7d14a5e86746d574649b6a5deb33575"
+    },
+    "tools/api-import.mjs": {
+      "sha256": "4ad993421850aed6efa6d34a3f790a8717ee1a704d789b6533d8d3b6407f118b"
+    },
+    "tools/blueprint.mjs": {
+      "sha256": "cc05f484205b5d92d8a4b01a65206a9c5b47f7efd3719e4a7476a034f26038e3"
+    },
+    "tools/build.mjs": {
+      "sha256": "53efe7839ed3c444e15bf3d96a620749eeb6b65dd2e38ed035b94f4ccbfe8326"
+    },
+    "tools/cli.mjs": {
+      "sha256": "6db166a35bb1558eaf7207e536bb173d59ec3eb2f48b162b83fbc93f37213146"
+    },
+    "tools/compiler.mjs": {
+      "sha256": "f40e320cbb977dca5bebe0cc67d45ba5bcfd961f519ae6323e7a25dc6786a051"
+    },
+    "tools/content.mjs": {
+      "sha256": "f0adafc53fd7b0d5d4939b7048db709a0a78776ec2ed6d617601cfab024e3fc0"
+    },
+    "tools/create-demo-meshes.mjs": {
+      "sha256": "08d2375ed7483eb56e5ecdba14f98f68e47ba40dd4c62ffaf0723b660dbad104"
+    },
+    "tools/dev.mjs": {
+      "sha256": "97cfde511d6150e63533ad60993e2eee13ab3997aba38dee8543f8f22c15358a"
+    },
+    "tools/diagrams.mjs": {
+      "sha256": "8e7c95367fd5a6bf60f86ed7d1a66460601cf91feb7955d58be0218da7000aac"
+    },
+    "tools/doc-ai.mjs": {
+      "sha256": "037fa9ad3993ca4c1b562783b3aa354ea3722293181d11f61afe313098dfa201"
+    },
+    "tools/export-layout.mjs": {
+      "sha256": "510fea76624b0cd6a73ec9ee6875c12c8639a4d6cf60ec430660890c5a741304"
+    },
+    "tools/extract.mjs": {
+      "sha256": "634b6a96a4ff1e156dbc3efada64dfcb5e5ab2c7af0e759c64513491832b002e"
+    },
+    "tools/pack-mesh.mjs": {
+      "sha256": "42c28429e22ee544f5fb99a6f9404f30d838a099db60626e008a32edc2f3b396"
+    },
+    "tools/reports.mjs": {
+      "sha256": "2b682a110eda2c7d3fe938cdc7d4f34ed9c8fc70bf74ee99387b9dfa24130c13"
+    },
+    "tools/size.mjs": {
+      "sha256": "ff8140ed1d7848ac18af441f566e512139d5772228c8ad1f9c789408be63ce8e"
+    },
+    "tools/source-index.mjs": {
+      "sha256": "4a12f4d234fd55a43113ba729bacfb360b3c2bc28764dae00c97600a8bed08ba"
+    },
+    "web/boot.mjs": {
+      "sha256": "94cf325544463286bb67f6e5c0211f6499f53713ae8e32449098144b9b7f528f"
+    },
+    "web/index.html": {
+      "sha256": "c9745da20533731039bad28a1a43f28326a1e3b73a7c4c6bb562c47c33299dbc"
+    },
+    "web/overview.mjs": {
+      "sha256": "969b4dd64b6c840c6d25929dff84baf18a7a8959c8179020ed81132a4588acd9"
+    },
+    "web/reader.html": {
+      "sha256": "419215d2ac874bbcb67c98a1d366853e3a791d8f37b22d6d36c2c98f48ff4c1d"
+    }
+  },
+  "sourcePackageJsonSha256": "fe61a5f539757752fb6eb4a63719b77ad9d4cf9425b10690f770d4dfcfc09fc3",
+  "readerAssets": {
+    "favicon.svg": {
+      "upstreamPath": "assets/favicon.svg",
+      "sha256": "122d503c67ed1a6bf40419ea5b15369f5052be561aed7f7c5b98cb5fc693927a",
+      "role": "Default generic book icon of the reader; no application logo is configured",
+      "license": "MIT"
+    }
+  }
+}

@@ -22,7 +22,7 @@ isolated disposable scanning. The pointer-free worker protocol is version 3.
 Pipelined processing retains one block; split-phase same-cycle processing exposes
 nonblocking submission, collection and deadline discard with variable block sizes.
 Application graph scheduling and OS privilege restriction remain separate work.
-See [mandatory isolation and scheduling](PluginIsolation.fr.md). See [migration](Migration.fr.md) and [plugins](Plugins.md).
+See [mandatory isolation and scheduling](PluginIsolation.fr.md) and [plugins](Plugins.md).
 
 CLAP is the primary plugin format. Its stable advanced control interfaces are
 exposed through original portable types in ClapExtensions.h; the upstream C ABI

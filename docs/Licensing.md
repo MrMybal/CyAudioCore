@@ -7,9 +7,9 @@ when distributing its linked code. No JUCE or CyDAW implementation was imported.
 
 ## Optional private backends
 
-Original CyDSP interfaces/adapters remain MIT. Dependencies retain their own grants;
+Original CyAudioCore interfaces/adapters remain MIT. Dependencies retain their own grants;
 permissive dependencies do not require opening the consuming application's code.
-The installed `share/CyDSP/licenses` directory must accompany binary distributions
+The installed `share/CyAudioCore/licenses` and dependency `share/CyDSP/licenses` directories must accompany binary distributions
 as required by the retained notices. No JUCE implementation, header or binary is
 used by these modules.
 
@@ -89,3 +89,14 @@ All imported files retain their upstream notices and manifest SHA-256 hashes.
 An original static-only CMake recipe selects system backends explicitly; no ASIO
 SDK, upstream example, test, or implicit proprietary SDK discovery is used.
 See [build options and platform dependencies](PortAudio.fr.md).
+
+## Documentation reader
+
+The generated manual uses CyDoc 0.1.0, revision
+93f64486d61dae27a94ae1e5a05a20f6edd99914, under MIT. Its exact notice is retained in
+[the generated reader](../Documentation/DocData/assets/licenses/CyDoc.txt).
+CyDoc is a documentation dependency, separate from the static audio modules.
+The authoring configuration and generator provenance are under `.CyDocBuild`;
+CMake installs the complete generated `Documentation` folder without running Node,
+npm, a generator, a download or a server. Marked 17.0.6, PrismJS 1.30.0 and esbuild
+0.25.12 are generation tools; their notices are also retained in the export.

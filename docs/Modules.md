@@ -1,5 +1,9 @@
 # CyAudioCore modules
 
+Start with the [English manual](../Documentation/Documentation.html#/en/overview)
+or [French manual](../Documentation/Documentation.html#/fr/overview) for setup,
+audio/MIDI, files and plugin workflows. Open the HTML with its complete DocData folder.
+
 | Target | Scope |
 | --- | --- |
 | CyAudioCore::CyAudioCore | Interface aggregate of configured static modules |
@@ -18,7 +22,7 @@ CLAP is the primary plugin format. See the [stable extension matrix and examples
 See the [current validated CyDSP dependency](CyDSPCurrent.fr.md) for its revision,
 archive rebuild and package compatibility checks.
 
-See [migration](Migration.fr.md), [plugins](Plugins.md), [MIDI2](Midi2.md),
+See [plugins](Plugins.md), [MIDI2](Midi2.md),
 [property exchange](CiProperty.md), [DAW contracts](DawIntegration.md),
 [coverage](Coverage.md), [licensing](Licensing.md) and [validation](Validation.md).
 

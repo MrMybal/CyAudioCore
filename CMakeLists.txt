@@ -203,6 +203,7 @@ write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/CyAudioCoreConfigVe
 install(FILES ${CMAKE_CURRENT_BINARY_DIR}/CyAudioCoreConfig.cmake ${CMAKE_CURRENT_BINARY_DIR}/CyAudioCoreConfigVersion.cmake DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/CyAudioCore)
 install(DIRECTORY third_party/licenses/ DESTINATION ${CMAKE_INSTALL_DATADIR}/CyAudioCore/licenses)
 install(FILES LICENSE third_party/manifest.json docs/Licensing.md DESTINATION ${CMAKE_INSTALL_DATADIR}/CyAudioCore)
+install(DIRECTORY Documentation/ DESTINATION ${CMAKE_INSTALL_DATADIR}/CyAudioCore/Documentation OPTIONAL)
 if(CYAUDIOCORE_COMPILE_CHECKS)
  file(GLOB_RECURSE headers CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/include/cyaudio/*.h")
  set(header_sources)

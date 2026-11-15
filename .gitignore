@@ -3,6 +3,7 @@
 /.vs/
 __pycache__/
 *.user
+/.CyDocBuild/internal/build/
 
 # Local cross-library benchmark
 /comparisons/juce/

@@ -1,8 +1,8 @@
 <table width="100%">
   <tr>
     <td width="300" align="left" valign="top">
-      <a href="docs/Modules.md">Documentation</a><br>
-      <a href="docs/Migration.fr.md">Migration guide (French)</a><br><br>
+      <a href="Documentation/Documentation.html#/en/overview">Manual</a><br>
+      <a href="https://github.com/MrMybal/CyAudioCore">Repository</a><br><br>
       <sub>README</sub><br>
       <a href="README.md">English</a> · <a href="README.fr.md">Français</a>
     </td>
@@ -16,77 +16,97 @@
 
 <h1 align="center">CyAudioCore</h1>
 
-A C++20 audio framework independent of any GUI toolkit. Uses CyDSP for numerics and provides devices, files, MIDI, transport, instruments and plugin hosts.
+A C++20 audio library for developers building audio engines, workstations and music applications. It provides devices, files, MIDI, transport, instruments and plugin hosts, with CyDSP supplying numerical processing.
 
 > **IN DEVELOPMENT · 0.1.0**
 >
-> Source only; no binary release is published. Read the [version notes](VERSION.md).
+> Available as source. Read the [changes and known limitations](VERSION.md) before integrating it.
 
 ## About CyAudioCore
 
-The application chooses its GUI and may use CyUI. Shared buffers, types and optimized processors come from CyDSP; plugin SDKs and codecs stay private. Plugin workers belong to CyAudioCore.
+Assemble an audio stream from memory or a file, control playback and recording, connect MIDI inputs and host plugins. Modules link as static libraries; the application chooses its GUI and scheduler.
+
+Buffers, views and numerical processors come from CyDSP. Device SDKs, codecs and plugin interfaces remain private. Prepare resources on the control thread before audio processing, and keep borrowed objects and buffers alive throughout their use.
 
 ## Features
 
-- Audio/MIDI: devices, reconnection, clocks, MIDI1/MPE/UMP/MIDI2/MIDI-CI.
-- Files: codecs, metadata, PCM proxy, waveform cache and instruments.
-- Sources: background playback, transport and recording.
-- Plugins: CLAP as the primary format, with explicit VST3/LV2/JSFX alternatives; parameters, states, native editors and process isolation. See [CLAP capabilities and integration](docs/Clap.fr.md).
+- **Audio devices:** miniaudio by default; optional PortAudio behind the same API. Select the I/O provider separately from the system backend.
+- **MIDI:** devices and reconnection, MIDI 1, MPE, UMP/MIDI 2, MIDI-CI and property exchange.
+- **Files and sources:** codecs, metadata, editing PCM proxies, waveform caching, read-ahead playback and background recording.
+- **Transport and instruments:** play, pause, seek, loops, tempo, polyphonic synthesis and CyDSP voice orchestration.
+- **Plugins:** CLAP as the primary format, with explicit VST3/LV2/JSFX alternatives; parameters, states, presets and native editors.
+- **Isolation:** plugin scans and instances run in separate processes. Pipelined mode adds one block; same-cycle mode uses `submit`/`collect`/`discard` with an application scheduler.
 
 ---
 
 ## Installation
 
-Build the static archives for the target ABI using CMake 3.24+ and a C++20 compiler. CyAudioCore requires CyDSP 0.3.0. See the [migration guide](docs/Migration.fr.md).
+CyAudioCore requires CMake 3.24+, a C++20 compiler and CyDSP 0.3.0 or later in the 0.3 series; the current dependency is 0.3.2. Rebuild matching headers and archives for the target ABI. Current Core validation covers Windows x64; other platform and hardware limitations are listed in the [version notes](VERSION.md).
 
-Currently validated CyDSP version: 0.3.2. The compatible minimum remains 0.3.0. See the [dependency and archive update](docs/CyDSPCurrent.fr.md).
+With CyAudioCore and CyDSP installed in the same prefix, add this to your application's `CMakeLists.txt`:
 
 ```cmake
+cmake_minimum_required(VERSION 3.24)
+project(MyAudioApp LANGUAGES CXX)
+
 find_package(CyAudioCore 0.1 CONFIG REQUIRED)
-target_link_libraries(MyApplication PRIVATE CyAudioCore::CyAudioCore)
+add_executable(MyAudioApp main.cpp)
+target_link_libraries(MyAudioApp PRIVATE CyAudioCore::CyAudioCore)
 ```
+
+Pass the installation prefix through `CMAKE_PREFIX_PATH`. You can also link only the targets you need: `CyAudioCore::Core`, `Files`, `Devices`, `Sources` or `Plugins`. See the [module index](docs/Modules.md).
 
 ## Source, build and required libraries
 
+Sources are in the [CyAudioCore repository](https://github.com/MrMybal/CyAudioCore). Supply a separate [CyDSP](https://github.com/MrMybal/CyDSP) checkout, which requires access to that private repository. This Windows example uses neighboring folders:
+
 ```sh
-cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DCYAUDIOCORE_CYDSP_SOURCE_DIR=../CyDSP
+cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DCYAUDIOCORE_CYDSP_SOURCE_DIR=../CyDSP -DCYAUDIOCORE_BUILD_PLUGIN_WORKER=ON
 cmake --build build/release --config Release
 cmake --install build/release --config Release --prefix build/install
 ```
 
-Tests and measurements are off by default. scripts/run_native.py explicitly enables Windows validation; --sanitize enables AddressSanitizer. Platform backends require their system SDKs. Configuration never downloads dependencies.
+Configuration never downloads dependencies. Production libraries are static; tests, measurements and compile checks are off by default. Native backends require their system SDKs.
+
+| CMake option | Default | Purpose |
+| --- | --- | --- |
+| `CYAUDIOCORE_CYDSP_SOURCE_DIR` | Empty | Explicit CyDSP checkout; otherwise use an installed package |
+| `CYAUDIOCORE_WITH_PORTAUDIO` | OFF | Adds the PortAudio provider to `Devices` |
+| `CYAUDIOCORE_BUILD_PLUGIN_WORKER` | OFF | Builds and installs the `cyaudio_plugin_worker` executable |
+| `CYAUDIOCORE_BUILD_FILES`, `CYAUDIOCORE_BUILD_DEVICES`, `CYAUDIOCORE_BUILD_SOURCES`, `CYAUDIOCORE_BUILD_PLUGINS` | ON | Enables the corresponding modules |
+
+Built-in plugin providers require an absolute worker path in `PluginIsolationOptions`. The worker must match the library ABI and protocol. The application manages audio deadlines; a separate process isolates crashes without guaranteeing third-party execution time.
+
+See [miniaudio/PortAudio selection and backend dependencies](Documentation/Documentation.html#/en/audio/providers), [CLAP contracts](Documentation/Documentation.html#/en/clap) and [worker configuration](Documentation/Documentation.html#/en/workers).
 
 ---
 
-Audio devices default to miniaudio. `CYAUDIOCORE_WITH_PORTAUDIO=ON` adds a private static provider behind the same API. `AudioProvider` selects the provider; `AudioBackend` selects the system API. See [options, example and limitations](docs/PortAudio.fr.md).
-
 ## License
 
-CyAudioCore uses the [MIT license](LICENSE). Dependencies retain their own terms; complete notice guidance is in [Licensing.md](docs/Licensing.md).
+CyAudioCore uses the [MIT license](LICENSE). Dependencies retain their own terms; keep their full notices when distributing linked code. The [license guide](docs/Licensing.md) and [provenance manifest](third_party/manifest.json) detail the components and their revisions.
 
 | Library · source | License · terms | Use / scope |
 | --- | --- | --- |
-| [CyDSP](https://github.com/MrMybal/CyDSP) | MIT | Separate numerical dependency; private repository |
-| [miniaudio](https://github.com/mackron/miniaudio) | [MIT-0](third_party/licenses/miniaudio.txt) | Unmodified private hardware-audio backend, built without engine, resource manager, decoders, encoders or generators; selected MIT-0 alternative. |
-| [PortAudio](https://github.com/PortAudio/portaudio) | [MIT](third_party/licenses/portaudio.txt) | Optional private static audio I/O provider |
-| [rtmidi](https://github.com/thestk/rtmidi) | [MIT](third_party/licenses/rtmidi.txt) | Unmodified private backend for physical MIDI input/output; nonbinding contribution request is not a license condition. |
-| [choc](https://github.com/Tracktion/choc) | [ISC AND BSD-3-Clause AND LicenseRef-minimp3-Public-Domain](third_party/licenses/choc.txt) | Private pinned file codecs; separately adapted WAV reader/writer preserves LIST subtype/raw metadata and validates RIFF padding/lengths. Pristine upstream headers retained byte-exact. ISC wrapper and embedded permissive codec notices retained. |
-| [windows-midi](https://github.com/microsoft/MIDI) | [MIT](third_party/licenses/windows-midi.txt) | Only native Windows MIDI Services COM ABI declarations and endpoint GUIDs adapted; no service, driver, SDK binary, synthesizer or GUI imported. Original interface definitions retained for pinned provenance. Stream/Function Block identity and text bit-packing adapted into original bounded portable helpers; no WinRT implementation/runtime linked. |
-| [clap](https://github.com/free-audio/clap) | [MIT](third_party/licenses/clap.txt) | Private pinned CLAP 1.2.10 interfaces; original host, stable extension controls and preset discovery. |
-| [vst3-interfaces](https://github.com/steinbergmedia/vst3_pluginterfaces) | [MIT](third_party/licenses/vst3-interfaces.txt) | Pinned unmodified interface headers and minimal ABI implementation files only; original CyDSP host/export/editor adapters use private SDK types. No external plugin or GUI framework code. |
-| [lv2](https://github.com/lv2/lv2) | [ISC](third_party/licenses/lv2.txt) | Private original CyDSP LV2 hosting dependencies. |
-| [lilv](https://github.com/lv2/lilv) | [ISC](third_party/licenses/lilv.txt) | Private original CyDSP LV2 hosting dependencies. |
-| [serd](https://github.com/drobilla/serd) | [ISC](third_party/licenses/serd.txt) | Private original CyDSP LV2 hosting dependencies. |
-| [sord](https://github.com/drobilla/sord) | [ISC](third_party/licenses/sord.txt) | Private original CyDSP LV2 hosting dependencies. |
-| [sratom](https://github.com/lv2/sratom) | [ISC](third_party/licenses/sratom.txt) | Private original CyDSP LV2 hosting dependencies. |
-| [zix](https://github.com/drobilla/zix) | [ISC](third_party/licenses/zix.txt) | Private original CyDSP LV2 hosting dependencies. |
-| [ysfx](https://github.com/jpcima/ysfx) | [Apache-2.0 AND Zlib AND MIT AND ISC AND (GPL-2.0-or-later WITH Bison-exception-2.2)](third_party/licenses/ysfx.txt) | Private JSFX compiler/runtime only, no JUCE/plugin application. Embedded WDL/EEL2, dr_libs and stb retain their notices. Original runtime adaptation fixes sparse-slider state serialization; keeps original notices. Generated EEL2 parser retains the Bison 2.2 exception permitting non-GPL larger applications; exception and GPL text included in the notice. Private Android API24 mutex adaptation only requests priority inheritance on platforms where that pthread API is available. |
+| [CyDSP](https://github.com/MrMybal/CyDSP) | MIT | Separate numerical dependency; required by every module. |
+| [miniaudio](https://github.com/mackron/miniaudio) | [MIT-0](third_party/licenses/miniaudio.txt) | Default private audio I/O provider. |
+| [PortAudio](https://github.com/PortAudio/portaudio) | [MIT](third_party/licenses/portaudio.txt) | Optional private static audio I/O provider. |
+| [rtmidi](https://github.com/thestk/rtmidi) | [MIT](third_party/licenses/rtmidi.txt) | Private MIDI 1 device backend. |
+| [choc](https://github.com/Tracktion/choc) | [ISC AND BSD-3-Clause AND LicenseRef-minimp3-Public-Domain](third_party/licenses/choc.txt) | Private audio file codecs, including their embedded permissive components. |
+| [windows-midi](https://github.com/microsoft/MIDI) | [MIT](third_party/licenses/windows-midi.txt) | Private Windows MIDI Services declarations and portable MIDI 2 builders. |
+| [clap](https://github.com/free-audio/clap) | [MIT](third_party/licenses/clap.txt) | Private CLAP 1.2.10 interfaces; primary plugin host. |
+| [vst3-interfaces](https://github.com/steinbergmedia/vst3_pluginterfaces) | [MIT](third_party/licenses/vst3-interfaces.txt) | Private VST3 interfaces and minimal ABI implementation. |
+| [lv2](https://github.com/lv2/lv2) | [ISC](third_party/licenses/lv2.txt) | Private LV2 plugin interfaces. |
+| [lilv](https://github.com/lv2/lilv) | [ISC](third_party/licenses/lilv.txt) | Private LV2 discovery and hosting. |
+| [serd](https://github.com/drobilla/serd) | [ISC](third_party/licenses/serd.txt) | Private RDF/Turtle parsing for LV2. |
+| [sord](https://github.com/drobilla/sord) | [ISC](third_party/licenses/sord.txt) | Private RDF indexing for LV2. |
+| [sratom](https://github.com/lv2/sratom) | [ISC](third_party/licenses/sratom.txt) | Private Atom/RDF serialization for LV2. |
+| [zix](https://github.com/drobilla/zix) | [ISC](third_party/licenses/zix.txt) | Private LV2 support primitives. |
+| [ysfx](https://github.com/jpcima/ysfx) | [Apache-2.0 AND Zlib AND MIT AND ISC AND (GPL-2.0-or-later WITH Bison-exception-2.2)](third_party/licenses/ysfx.txt) | Private JSFX/EEL2 runtime; bundled components and the Bison parser exception retain their full notices. |
+| [CyDoc](https://github.com/MrMybal/CyDoc) | [MIT](Documentation/DocData/assets/licenses/CyDoc.txt) | Documentation reader and generation only; separate from the audio runtime. |
 
 ## References and links
 
-- [Documentation](docs/Modules.md)
+- [Manual](Documentation/Documentation.html#/en/overview)
 - [Architecture](docs/Architecture.md)
-- [Migration](docs/Migration.fr.md)
-
-Built-in plugin providers require an explicit worker executable and always isolate
-module/preset discovery and instances. See [isolation and scheduling](docs/PluginIsolation.fr.md).
+- [Source repository](https://github.com/MrMybal/CyAudioCore)
+- [Issue tracker](https://github.com/MrMybal/CyAudioCore/issues)

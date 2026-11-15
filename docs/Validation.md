@@ -30,7 +30,7 @@ monolithic measurements and platform results do not establish this snapshot's
 coverage. Windows ARM64 compilation does not prove execution on an ARM64 device.
 
 The source/header namespaces and CMake package boundary are breaking changes.
-See [migration](Migration.fr.md). Candidate build logs and the exact application
+See [architecture](Architecture.md). Candidate build logs and the exact application
 plan are retained in the local build/separation-* directories, outside source packages.
 README structure and relative links are verified locally; actual GitHub rendering
 is unverified because no publication was requested.
