@@ -1,48 +1,53 @@
-# Référence CyDSP courante — 15 novembre 2026
+# Référence CyDSP courante — 16 novembre 2026
 
-Version intégrée et validée : **CyDSP 0.3.2**, révision
-`0d67c6a60749ef241a87bc3592fa63c61998a5e2`. Cette mise à jour succède à
-`e3d719f8f8753a4090ee75c2df2e399c0778dea9` (0.3.0) et inclut 0.3.1.
-L’empreinte SHA-256 des entrées de compilation de CyDSP est
-`114977a9b190a6dd11a017bddf6c144cbc5d69230976cb0ef419782ec3a73bd7`.
+Version intégrée et validée : **CyDSP 0.4.0**, révision
+`c1d9a52fce7ac90515b0e264545903fdad2901b4`.
+L’empreinte SHA-256 des entrées de compilation figées est
+`ecaad142e90db85b7cfb590d6b07223f51a48eafdb62151b532ca7a6875be6b7`.
+La référence précédente était CyDSP 0.3.2, commit
+`0d67c6a60749ef241a87bc3592fa63c61998a5e2`.
 
-## Changements de la dépendance
+## Intégration
 
-- 0.3.1 partage les courbes de saturation et de dynamique entre AVX2, AVX-512,
-  NEON ARM64 et SVE. Les travaux FFT progressifs et le recouvrement des partitions
-  de convolution sont regroupés dans les budgets existants.
-- 0.3.2 fusionne le drive, le wavefolder direct et leur mixage, met en cache la
-  compensation DC, vectorise une partie du transient précis et traite l’EQ
-  dynamique par paires de canaux indépendants. Les qualités par défaut restent
-  inchangées ; le calcul précis conserve ses appels scalaires à `std::pow`.
-- La convolution copie les entrées seulement lorsqu’elles partagent la mémoire
-  des sorties. Les canaux routés sont réécrits intégralement ; les autres sont
-  effacés. Les publications des recouvrements utilisent les primitives SIMD.
-- Les signatures publiques utilisées par Core restent compatibles. La disposition
-  privée de `MatrixConvolver` change : reconstruire les archives et les
-  consommateurs avec les mêmes headers. Remplacer seulement une archive dans
-  une application déjà compilée n’est pas une mise à jour d’ABI valide.
+- Les buffers, vues, conversions, `ProcessSpec`, `Status`, `VectorOps`, générateurs,
+  enveloppes et stretching utilisés par Core conservent leurs signatures. Aucun
+  noyau numérique n’est recopié et aucun flag SIMD global n’est ajouté.
+- Les ajouts 0.4 comprennent les profils HRTF explicites, les délais fractionnaires,
+  les HRIR analytiques possédés et les décodeurs HOA pondérés/MagLS. La disposition
+  de types C++ publics comme `HrtfPreparation` évolue : reconstruire les archives,
+  applications et workers avec les mêmes headers et la même copie de CyDSP.
+- La latence et la traîne viennent du processeur choisi. Un rendu spatial ou un
+  profil de qualité n’est jamais appliqué automatiquement par Core. La préparation
+  HRTF/HOA reste hors du callback ; les vues et états empruntés gardent leur contrat
+  de durée de vie.
+- L’import SOFA depuis la mémoire et le cache d’assets HRTF sont des cibles séparées
+  `CyDSP::Sofa` et `CyDSP::HrtfAssets`. `CYDSP_BUILD_SOFA` et
+  `CYDSP_BUILD_HRTF_ASSETS` restent désactivés par défaut. L’application les lie
+  explicitement. Le lecteur complet exige les choix HDF5/ZLIB explicites ; aucun
+  SDK ou jeu de données HRTF n’est installé implicitement par Core.
+- Les notices des composants SOFA restent distribuées par CyDSP. Son manifeste
+  inventorie désormais sept composants, dont `libmysofa` et `miniz`. Les quatorze
+  composants de services de Core et leurs notices sont inchangés. Le contrôle de
+  séparation reconnaît les partitions 5/14 et 7/14, sans accepter d’autres noms.
 
-Ces optimisations restent dans CyDSP. Core ne recopie aucun noyau et n’ajoute
-aucun flag SIMD ou fast-math global. Les effets sont choisis et préparés par
-l’application ; Core ne les applique pas automatiquement à un flux.
+## Versions CMake et ABI
 
-## Intégration et version minimale
+Le minimum compatible reste **CyDSP 0.3.0**. La recherche d’un paquet installé
+accepte les branches 0.4 et 0.3. Le checkout explicite
+`CYAUDIOCORE_CYDSP_SOURCE_DIR` reste utilisable ; aucun téléchargement n’est ajouté.
 
-Les buffers, vues, conversions, `ProcessSpec`, `Status`, `VectorOps`, files,
-générateurs et traitements de stretching employés par Core ne nécessitent pas de
-modification de leur API. Le synthétiseur conserve `Adsr::process` et
-`SampleData::render`, introduits en 0.3.0, avec segmentation MIDI/UMP.
+À la génération, Core enregistre la version réelle du target CyDSP. Son paquet
+installé expose `CyAudioCore_CYDSP_VERSION` et demande cette version **exacte**,
+avec `Stretch` lorsque nécessaire. Un target CyDSP préchargé d’une autre version
+est refusé avec un message demandant de reconstruire les archives et headers
+correspondants. Ce contrôle de version ne remplace pas la cohérence des fichiers
+pour deux états de développement portant le même numéro.
 
-Le minimum compatible reste **CyDSP 0.3.0**. CMake et le garde de compilation
-continuent de demander la branche d’API 0.3 ; 0.3.2 est la révision de validation,
-pas une dépendance téléchargée implicitement. CyDSP reste un projet externe,
-utilisé via `CYAUDIOCORE_CYDSP_SOURCE_DIR` ou un paquet installé. Il n’est pas
-copié dans les sources distribuées de Core.
-
-Le checkout CyDSP a été consulté en lecture seule. La campagne utilise une archive
-immuable du commit ci-dessus, créée sous `build/cydsp-update-0.3.2`, pour ne pas
-être affectée par une modification concurrente du dépôt dépendant.
+CyDSP a été consulté en lecture seule. Une copie de travail figée est conservée
+sous `build/cydsp-update-0.4.0/source`, avec son empreinte dans le rapport local.
+Les entrées de compilation de cette copie ont été comparées au checkout propre
+du commit ci-dessus.
+Les compilations et installations écrivent exclusivement dans le build de Core.
 
 ## Reconstruction
 
@@ -51,27 +56,25 @@ python scripts/build.py --preset windows-x64 --cydsp-source ../CyDSP --compile-c
 cmake --install build/windows-x64 --config Release --prefix build/install
 ```
 
-Ces commandes compilent le checkout fourni ; pour reproduire cette campagne,
-fournir une archive de la révision exacte ci-dessus avec `--cydsp-source`.
-Reconstruire aussi les applications et workers qui lient ces archives statiques.
-Les options de fournisseurs audio et de worker restent des choix CMake explicites.
+Ces commandes prennent le checkout indiqué. Pour reproduire les contrôles décrits
+ici, fournir la copie figée portant l’empreinte ci-dessus, puis reconstruire aussi
+les applications et workers liés statiquement. miniaudio demeure le fournisseur
+par défaut ; PortAudio reste optionnel.
 
-## Validation de l’intégration
+## Contrôles
 
-La suite `dspComposition` relie désormais `MemoryAudioSource`, `AudioTransport`,
-le graphe public CyDSP, l’adaptateur de callback Core et `MatrixConvolver`, en
-float et double. Elle compare un routage partiel à des signaux attendus avec des
-blocs de 1 à 64 frames, en modes hybrid/nonuniform/scheduled et avec tête spectrale
-explicite. Elle vérifie les sorties sans route, la traîne après fin de lecture,
-les buffers distincts et en place, les sous-blocs protégés et le reset. Les appels
-préparés passent dans l’audit d’allocation/libération des tests Core.
+Le test de composition HRTF relie `MemoryAudioSource`, `AudioTransport`, le graphe
+public CyDSP, son rendu binaural et l’adaptateur de callback Core en float et double.
+Il compare au processeur direct les blocs variables, la fin de source, la traîne,
+les changements de direction et le reset. Il contrôle les gardes de sous-blocs,
+la propagation de latence et les allocations/libérations du chemin préparé.
 
-Le consommateur installé de `scripts/validate_dsp_package.py` demande la version
-exacte du paquet sélectionné et compare les trois composantes de `Version.h`.
-Il construit, traite et détruit aussi un `MatrixConvolver` contre l’archive
-installée, en plus des API de synthèse, d’analyse et de qualité déjà couvertes.
-Le paquet et le consommateur sont déplacés pour vérifier la résolution CMake
-indépendamment du checkout et du premier préfixe d’installation.
+Le consommateur CMake installé puis déplacé vérifie la version exacte et les
+symboles 0.4, notamment la propriété et le déplacement des HRIR analytiques.
+Il vérifie les deux ordres de chargement Core/CyDSP et le refus explicite d’un
+ancien target préchargé.
+
+Les commandes de validation restent explicites :
 
 ```sh
 python scripts/run_native.py --services-only --portaudio --cydsp-source ../CyDSP
@@ -80,30 +83,30 @@ python scripts/run_native.py --services-only --cydsp-source ../CyDSP
 python scripts/validate_dsp_package.py --build-dir build/native-x64-portaudio --cydsp-source ../CyDSP --require-prepared-optimizations
 ```
 
-Windows x64, MSVC 19.40, archives Release :
+Windows x64, MSVC 19.40, builds Release :
 
 | Contrôle | Résultat |
 | --- | --- |
-| Régressions Core avec PortAudio simulé (27 suites) | Réussi |
-| Régressions Core avec AddressSanitizer, DSP instrumenté, PortAudio simulé (27 suites) | Réussi |
-| Régressions Core sans PortAudio (26 suites) | Réussi |
-| Compilation indépendante des headers publics Core, dans les trois configurations | Réussi |
-| Reconstruction et installation de production, tests et mesures désactivés, worker explicitement activé | Réussi |
-| Consommateurs installés puis déplacés, PortAudio ON/OFF, paquet et headers 0.3.2 exacts | Réussi |
-| Contrôles des sources, provenance et frontière publique Core/DSP | Réussi |
+| Core avec PortAudio simulé, 28 suites | Réussi |
+| Core + CyDSP instrumentés AddressSanitizer, PortAudio simulé, 28 suites | Réussi |
+| Core sans PortAudio, 27 suites | Réussi |
+| Compilation indépendante des headers publics, trois configurations | Réussi |
+| Paquets 0.4 installés puis déplacés, PortAudio ON/OFF | Réussi |
+| Dépendance déjà chargée de même version / refus de 0.3.2 et 0.2.0 avec Core 0.4 | Réussi |
+| Configuration de Core depuis les paquets installés 0.3.2 et 0.4.0 | Réussi |
+| CyDSP 0.3.2 : composition, synthèse, sources, veille et consommateur installé | Réussi |
+| Archives et worker de production reconstruits/installés ; tests/mesures OFF | Réussi |
+| Sources, provenance et frontière publique pour 0.3.2 et 0.4.0 | Réussi |
+| Manuel FR/EN régénéré, installation identique et quatre exemples C++ compilés | Réussi |
 
-Les entrées de compilation sont identiques avant et après chaque campagne. Le
-build principal et `build/install` utilisent aussi la copie figée de CyDSP 0.3.2 ;
-les périphériques de production conservent miniaudio par défaut.
-MSVC signale l’avertissement C4456 dans `AdvancedDynamics.cpp` de CyDSP (variable
-locale `direct` masquée). Ce fichier dépendant n’a pas été modifié.
+Les empreintes des entrées de compilation restent identiques pendant les campagnes.
+Le build de production et `build/install` utilisent aussi la copie CyDSP 0.4.0.
+MSVC conserve l’avertissement C4456 de CyDSP dans `AdvancedDynamics.cpp`
+(variable locale `direct` masquée) ; ce fichier dépendant n’a pas été modifié.
 
-Aucun périphérique physique n’est ouvert. La suite DSP indépendante n’est ni
-construite ni lancée ; les tests natifs sont ceux de Core et de ses consommateurs.
-Aucun benchmark comparatif n’est exécuté et aucun gain global pour Core n’est
-déduit des mesures réalisées dans CyDSP. Les mesures historiques de Core
-conservent leurs révisions de référence dans [Measurements.md](Measurements.md).
-
+Aucun périphérique physique n’est ouvert. Les tests indépendants de CyDSP ne sont
+ni construits ni exécutés. Aucun benchmark n’est exécuté et aucun gain global
+pour Core n’est déduit des optimisations ou profils spatiaux de CyDSP.
 macOS, Linux, Android, x86, Windows ARM64 et SVE ne sont pas exécutés pour cette
-mise à jour. Leur couverture publiée dans CyDSP ne remplace pas une validation de
-Core sur ces cibles. Les SDK et notices des dépendances privées sont inchangés.
+mise à jour. Les lecteurs SOFA optionnels et les jeux de données matériels ne sont
+pas validés par les tests de composition du cœur.

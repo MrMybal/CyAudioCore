@@ -4,13 +4,13 @@ title: Compiler et lier
 description: Installer les bibliothèques statiques et rendre un premier bloc.
 section: Guides
 order: 1
-sourceRevision: 1
+sourceRevision: 2
 parent: overview
 ---
 
 ## Prérequis {#requirements}
 
-Utilisez CMake 3.24+, un compilateur C++20 et CyDSP 0.3.0 minimum dans la branche 0.3. La dépendance courante est 0.3.2. Obtenez CyDSP séparément ; son dépôt demande des droits d’accès. Gardez des headers, archives, runtimes C++ et architectures cohérents entre application et workers. Recompilez les consommateurs quand une dépendance change la disposition de ses objets C++.
+Utilisez CMake 3.24+, un compilateur C++20 et CyDSP 0.3.x ou 0.4.x (minimum 0.3.0). La dépendance courante est 0.4.0. Obtenez CyDSP séparément. Gardez des headers, archives, runtimes C++ et architectures cohérents entre application et workers. Recompilez les consommateurs quand une dépendance change la disposition de ses objets C++. Le paquet installé de Core demande la version exacte de CyDSP utilisée pour compiler ses archives statiques.
 
 ## Compiler les sources {#build}
 
@@ -65,3 +65,19 @@ int main() {
 ```
 
 La source doit vivre plus longtemps que le transport et ses échantillons doivent rester immuables. Dans un callback, réutilisez la sortie préparée et vérifiez chaque statut retourné. Continuez avec les [périphériques audio](doc:audio) ou la [lecture de fichiers](doc:sources).
+
+## Assets HRTF et SOFA optionnels {#hrtf}
+
+Avec CyDSP 0.4, préparez les banques HRTF, HRIR analytiques et décodeurs HOA par son API publique, puis utilisez leurs appels `process` dans vos callbacks de graphe. La préparation appartient au thread de contrôle. Transmettez au graphe la latence et la traîne annoncées par le processeur ; la conception HOA spectrale et les politiques de délai fractionnaire peuvent ajouter de la latence. Core ne choisit pas de profil de qualité spatiale et n’applique pas automatiquement de rendu.
+
+Les assets HRTF décodés/cache et les lecteurs SOFA sont des cibles CyDSP séparées et optionnelles. Pour une compilation depuis les sources, `CYDSP_BUILD_HRTF_ASSETS=ON` active `CyDSP::HrtfAssets` ; `CYDSP_BUILD_SOFA=ON` active aussi `CyDSP::Sofa`. Les deux sont désactivés par défaut. Le lecteur compact se sélectionne par `CYDSP_SOFA_COMPACT` ; le lecteur complet exige l’option explicite `CYDSP_SOFA_COMPLETE` et les SDK externes HDF5/ZLIB. Obtenez les jeux de données séparément et conservez leurs licences ainsi que les notices distribuées avec CyDSP.
+
+Pour un Core installé, compilé contre CyDSP 0.4 avec SOFA activé :
+
+```cmake
+find_package(CyAudioCore 0.1 CONFIG REQUIRED)
+find_package(CyDSP ${CyAudioCore_CYDSP_VERSION} EXACT CONFIG REQUIRED COMPONENTS Sofa)
+target_link_libraries(MyAudioApp PRIVATE CyAudioCore::CyAudioCore CyDSP::Sofa)
+```
+
+L’agrégat de Core ne lie pas le lecteur. L’hôte importe explicitement depuis la mémoire et prépare les données avant le traitement ; l’accès aux fichiers, la propriété et le choix du jeu de données restent sa responsabilité.

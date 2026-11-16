@@ -41,7 +41,7 @@ Buffers, views and numerical processors come from CyDSP. Device SDKs, codecs and
 
 ## Installation
 
-CyAudioCore requires CMake 3.24+, a C++20 compiler and CyDSP 0.3.0 or later in the 0.3 series; the current dependency is 0.3.2. Rebuild matching headers and archives for the target ABI. Current Core validation covers Windows x64; other platform and hardware limitations are listed in the [version notes](VERSION.md).
+CyAudioCore requires CMake 3.24+, a C++20 compiler and CyDSP 0.3.x or 0.4.x (minimum 0.3.0); the current dependency is CyDSP 0.4.0. Rebuild matching headers and archives for the target ABI. Current Core validation covers Windows x64; other platform and hardware limitations are listed in the [version notes](VERSION.md).
 
 With CyAudioCore and CyDSP installed in the same prefix, add this to your application's `CMakeLists.txt`:
 
@@ -58,7 +58,7 @@ Pass the installation prefix through `CMAKE_PREFIX_PATH`. You can also link only
 
 ## Source, build and required libraries
 
-Sources are in the [CyAudioCore repository](https://github.com/MrMybal/CyAudioCore). Supply a separate [CyDSP](https://github.com/MrMybal/CyDSP) checkout, which requires access to that private repository. This Windows example uses neighboring folders:
+Sources are in the [CyAudioCore repository](https://github.com/MrMybal/CyAudioCore). Supply a separate [CyDSP](https://github.com/MrMybal/CyDSP) checkout. This Windows example uses neighboring folders:
 
 ```sh
 cmake -S . -B build/release -G "Visual Studio 17 2022" -A x64 -DCYAUDIOCORE_CYDSP_SOURCE_DIR=../CyDSP -DCYAUDIOCORE_BUILD_PLUGIN_WORKER=ON

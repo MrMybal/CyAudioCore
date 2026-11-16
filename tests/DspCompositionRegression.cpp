@@ -226,6 +226,73 @@ template <Sample T> void spatialWidth() {
             require(std::abs(double(value) - .25 * double(ch + 1) / 64) < 1e-7, "64-channel source bank -> graph -> Core block");
 }
 
+#if CYDSP_VERSION_MAJOR == 0 && CYDSP_VERSION_MINOR >= 4
+template <Sample T> void hrtfTransportGraph() {
+    constexpr std::size_t capacity = 17;
+    const std::array<T,3> left{{T(1),T(.25),T(-.125)}}, right{{T(.5),T(-.25),T(.125)}};
+    const std::array<cydsp::HrirPoint<T>,2> points{{
+        {{1,0,0},left,right,.5,1.25}, {{0,1,0},right,left,1.25,.5}}};
+    cydsp::HrtfPreparation preparation;
+    ok(cydsp::hrtfPreparation(cydsp::HrtfQuality::realtimeHigh,48000,preparation));
+    preparation.detectOnsets = false;
+    cydsp::HrtfSet<T> bank; ok(bank.prepare(points,preparation));
+    require(bank.storageReport().fractionalDelayTaps == 17 && !bank.truncated(), "explicit 0.4 HRTF preparation policy");
+    cydsp::HrirBinaural<T> renderer, reference;
+    ok(renderer.prepare({48000,capacity,1},bank)); ok(reference.prepare({48000,capacity,1},bank));
+    const std::array<cydsp::DspBus,1> mono{{{7,1}}}, stereo{{{42,2}}};
+    const std::array<cydsp::DspNode<T>,1> nodes{{{1,&renderer,
+        [](void* ptr,auto in,auto out) noexcept { return static_cast<cydsp::HrirBinaural<T>*>(ptr)->process(in[0],out[0]); },
+        mono,stereo,{renderer.latencyFrames(),renderer.tailFrames()},
+        [](void* ptr) noexcept { static_cast<cydsp::HrirBinaural<T>*>(ptr)->reset(); }}}};
+    const std::array<cydsp::DspConnection,2> routes{{
+        {cydsp::graphInputNode,7,1,7,1},{1,42,cydsp::graphOutputNode,42,1}}};
+    cydsp::MultiBusGraph<T> graph; ok(graph.prepare({48000,capacity,2},mono,stereo,nodes,routes));
+    examples::DspGraphCallback<T> callback; ok(callback.prepare(graph));
+    require(renderer.latencyFrames() > 0 && callback.timing().latencyFrames == renderer.latencyFrames(),
+            "HRTF fractional-delay latency survives graph callback composition");
+    AudioBuffer<T> data, dry, actual, expected;
+    ok(data.resize(1,13)); ok(dry.resize(1,capacity));
+    ok(actual.resize(2,capacity+4)); ok(expected.resize(2,capacity));
+    data.block().channel(0)[0] = T(1);
+    MemoryAudioSource<T> source; ok(source.prepare(data.block(),48000));
+    AudioTransport<T> transport; ok(transport.prepare({48000,capacity,1},source));
+    const std::array<std::size_t,5> sizes{{1,7,17,3,11}};
+    for (unsigned pass = 0; pass < 2; ++pass) {
+        ok(transport.enqueue({TransportAction::seek,0})); ok(transport.enqueue({TransportAction::play}));
+        Status status{};
+        audited([&]() noexcept {
+            callback.reset(); reference.reset();
+            status = renderer.setDirection(pass ? cydsp::Vec3{0,1,0} : cydsp::Vec3{1,0,0},0);
+            if (status == Status::ok) status = reference.setDirection(pass ? cydsp::Vec3{0,1,0} : cydsp::Vec3{1,0,0},0);
+        }); ok(status);
+        bool signal = false;
+        for (std::size_t first = 0, block = 0; first < 96; ++block) {
+            const auto frames = std::min(sizes[block%sizes.size()],96-first);
+            for (std::size_t ch = 0; ch < 2; ++ch)
+                std::fill(actual.block().channel(ch).begin(),actual.block().channel(ch).end(),T(99));
+            auto input = dry.block().subBlock(0,frames), output = actual.block().subBlock(2,frames);
+            auto comparison = expected.block().subBlock(0,frames);
+            audited([&]() noexcept {
+                status = transport.process(input);
+                if (status == Status::ok) status = callback.process(input,output);
+                if (status == Status::ok) status = reference.process(input,comparison);
+            }); ok(status);
+            for (std::size_t ch = 0; ch < 2; ++ch) {
+                for (std::size_t i = 0; i < frames; ++i) {
+                    require(std::abs(double(output.channel(ch)[i]-comparison.channel(ch)[i])) < 1e-7,
+                            "transport EOF and variable blocks preserve prepared HRTF output");
+                    signal |= output.channel(ch)[i] != 0;
+                }
+                require(actual.block().channel(ch)[1] == T(99) && actual.block().channel(ch)[frames+2] == T(99),
+                        "HRTF graph leaves Core sub-block guards intact");
+            }
+            first += frames;
+        }
+        require(signal,"HRTF graph produces audio before its tail drains");
+    }
+}
+#endif
+
 #if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
 void deviceBuses() {
     for (bool planar : {false,true}) for (bool absent : {false,true}) {
@@ -294,6 +361,9 @@ void dspCompositionRegression() {
     transportConvolution<float>(); transportConvolution<double>();
     customSynthVoice<float>(); customSynthVoice<double>();
     spatialWidth<float>(); spatialWidth<double>();
+#if CYDSP_VERSION_MAJOR == 0 && CYDSP_VERSION_MINOR >= 4
+    hrtfTransportGraph<float>(); hrtfTransportGraph<double>();
+#endif
 #if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
     deviceBuses();
 #endif

@@ -6,6 +6,7 @@ CyAudioCore provides audio services and uses the public CyDSP API for numerical 
 
 ## Changes since the initial import
 
+- CyDSP 0.4.0 compatibility: HRTF graph/transport composition, support for installed 0.4 packages and exact static dependency version checks. See the [current integration](docs/CyDSPCurrent.fr.md).
 - CyDSP 0.3.2 compatibility: rebuilt archives and exact-version installed-package validation; convolution composition through transport and graph callbacks with variable blocks and aliased buffers. See the [current dependency](docs/CyDSPCurrent.fr.md).
 
 - Public plugin providers isolate every instance and scan; portable CLAP controls and preset discovery use IPC, with optional same-cycle scheduling and a dedicated worker executable. See [configuration and usage](docs/PluginIsolation.fr.md).

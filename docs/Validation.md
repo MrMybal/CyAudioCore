@@ -1,5 +1,8 @@
 # Split validation — 2026-11-12
 
+The current [CyDSP integration](CyDSPCurrent.fr.md) records the dependency update
+and its own execution scope.
+
 The current CLAP extension work has its own [2026-11-14 validation record](ClapValidation.md),
 including the immutable DSP dependency revision and independent headless reference
 plugins. The older matrix below describes its original split snapshot.

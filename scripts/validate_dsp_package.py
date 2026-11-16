@@ -15,6 +15,7 @@ p.add_argument('--build-dir', type=Path, required=True)
 p.add_argument('--cydsp-source', type=Path, default=ROOT.parent/'CyDSP')
 p.add_argument('--require-current-dynamics', action='store_true', help='Verify the newer Dynamics::minimumAppliedGain installed symbol')
 p.add_argument('--require-prepared-optimizations', action='store_true', help='Verify the b973c1b prepared/mixed DSP APIs and explicit quality defaults')
+p.add_argument('--incompatible-dsp-prefix', type=Path, help='Optional installed different DSP version: verify rejection of a preloaded incompatible target')
 p.add_argument('--cmake', default=r'C:/Program Files/Microsoft Visual Studio/2022/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe')
 a = p.parse_args()
 build = a.build_dir.resolve(strict=True)
@@ -46,10 +47,16 @@ def run(name, args):
 
 (source/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.24)
 project(InstalledDspConsumer LANGUAGES CXX)
+if(PRELOAD_CYDSP)
+ find_package(CyDSP @DSP_VERSION@ EXACT CONFIG REQUIRED)
+endif()
 find_package(CyAudioCore 0.1 CONFIG REQUIRED COMPONENTS Devices Files Sources Plugins)
+if(NOT CyAudioCore_CYDSP_VERSION VERSION_EQUAL "@DSP_VERSION@")
+ message(FATAL_ERROR "Core did not record the matching static dependency version")
+endif()
 add_executable(consumer main.cpp)
 target_link_libraries(consumer PRIVATE CyAudioCore::CyAudioCore)
-''', encoding='utf-8', newline='\n')
+'''.replace('@DSP_VERSION@', report['expectedDependencyVersion']), encoding='utf-8', newline='\n')
 with (source/'CMakeLists.txt').open('a', encoding='utf-8', newline='\n') as generated:
     generated.write('find_package(CyDSP '+report['expectedDependencyVersion']+' EXACT CONFIG REQUIRED)\n')
     generated.write('target_compile_definitions(consumer PRIVATE '+ ' '.join(
@@ -75,9 +82,10 @@ if a.require_prepared_optimizations:
 #endif
 #include <cmath>
 #include <type_traits>
+#include <utility>
 static_assert(std::is_same_v<cyaudio::AudioBlock<float>,cydsp::AudioBlock<float>>);
 static_assert(std::is_same_v<cyaudio::Status,cydsp::Status>);
-// Core requires the CyDSP 0.3 package; an older installed header fails here.
+// Core retains 0.3 compatibility; package, header and archive versions must match.
 static_assert(CYDSP_VERSION_MAJOR > 0 || CYDSP_VERSION_MINOR >= 3);
 static_assert(CYDSP_VERSION_MAJOR == EXPECT_CYDSP_VERSION_MAJOR &&
               CYDSP_VERSION_MINOR == EXPECT_CYDSP_VERSION_MINOR &&
@@ -197,6 +205,20 @@ int main() {
     if (binaural.prepare({48000,8,1},bank)!=Status::ok) return 13;
     cyaudio::AudioBuffer<float> stereo;
     if (stereo.resize(2,8)!=Status::ok || binaural.process(input.block(),stereo.block())!=Status::ok) return 14;
+#if CYDSP_VERSION_MAJOR == 0 && CYDSP_VERSION_MINOR >= 4
+    // Exercise new owning types and signatures against the relocated static archive.
+    cydsp::Vec3 directions[8];
+    if (cydsp::sphericalFibonacci(directions)!=Status::ok) return 44;
+    cydsp::HrirBank<float> generated;
+    cydsp::AnalyticHrirOptions analytic; analytic.taps=64;
+    if (cydsp::analyticHrirs(analytic,directions,generated)!=Status::ok || generated.points().size()!=8) return 45;
+    auto moved=std::move(generated);
+    cydsp::HrtfPreparation hrtf;
+    if (cydsp::hrtfPreparation(cydsp::HrtfQuality::realtimeHigh,48000,hrtf)!=Status::ok ||
+        hrtf.fractionalDelayTaps!=17 || bank.prepare(moved.points(),hrtf)!=Status::ok ||
+        binaural.prepare({48000,8,1},bank)!=Status::ok || binaural.latencyFrames()==0 ||
+        binaural.process(input.block(),stereo.block())!=Status::ok) return 46;
+#endif
     // The CLAP facade/discovery symbols and public headers must survive install/relocation.
     cyaudio::ClapPresetDiscovery discovery;
     if (discovery.catalogue()!=nullptr) return 37;
@@ -240,6 +262,25 @@ try:
         assert len(entries)==1 and Path(entries[0]).resolve().is_relative_to(relocated.resolve()), 'Non-relocated package: '+package
     run('build', [a.cmake, '--build', str(folder/'consumer-build'), '--config', 'Release'])
     run('run', [str(folder/'consumer-build/Release/consumer.exe')])
+    # Repeat package resolution with the dependency already imported by the parent.
+    run('configure-preloaded', [a.cmake, '-S', str(source), '-B', str(folder/'consumer-build'), '-DPRELOAD_CYDSP=ON'])
+    report['matchingPreloadedTargetAccepted'] = True
+    if a.incompatible_dsp_prefix:
+        incompatible = a.incompatible_dsp_prefix.resolve(strict=True)
+        negative = folder/'incompatible-consumer'
+        negative.mkdir()
+        (negative/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.24)
+project(IncompatibleDspConsumer LANGUAGES CXX)
+find_package(CyDSP CONFIG REQUIRED PATHS "${OTHER_DSP_PREFIX}" NO_DEFAULT_PATH)
+find_package(CyAudioCore 0.1 CONFIG REQUIRED PATHS "${CORE_PREFIX}" NO_DEFAULT_PATH)
+''', encoding='utf-8', newline='\n')
+        rejected = subprocess.run([a.cmake, '-S', str(negative), '-B', str(folder/'incompatible-build'),
+            '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DOTHER_DSP_PREFIX='+str(incompatible),
+            '-DCORE_PREFIX='+str(relocated)], cwd=ROOT, env=environment, capture_output=True, text=True, timeout=240)
+        output = rejected.stdout+rejected.stderr
+        (folder/'incompatible.log').write_text(output, encoding='utf-8', newline='\n')
+        assert rejected.returncode and 'Rebuild matching archives and headers' in output, 'Incompatible target was not rejected by Core'
+        report['incompatiblePreloadedTargetRejected'] = True
     assert not list((relocated/'include').rglob('portaudio.h')), 'Provider headers leaked'
     assert not (relocated/'include/clap').exists(), 'CLAP SDK leaked into public include tree'
     report['inputsUnchanged'] = report['sourceSha256']==source_digest() and report['dependency']==dependency_fingerprint(a.cydsp_source)

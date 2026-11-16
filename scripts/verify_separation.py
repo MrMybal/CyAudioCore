@@ -14,6 +14,12 @@ for area in ['io','midi','plugins','sources']:
  if list((dsp/'include/cydsp'/area).glob('*.h')) or list((dsp/'src'/area).glob('*.cpp')):errors.append('Service implementation retained in DSP: '+area)
 left=json.loads((dsp/'third_party/manifest.json').read_text(encoding='utf-8'))['components'];right=json.loads((ROOT/'third_party/manifest.json').read_text(encoding='utf-8'))['components']
 if set(c['name'] for c in left)&set(c['name'] for c in right):errors.append('Duplicated vendor ownership')
-if len(left)!=5 or len(right)!=14:errors.append('Unexpected dependency partition')
+dsp_names={c['name'] for c in left}
+required_dsp={'DSPFilters','FFTConvolver','r8brain-free-src','signalsmith-linear','signalsmith-stretch'}
+optional_sofa={'libmysofa','miniz'}
+if len(left)!=len(dsp_names) or dsp_names not in (required_dsp,required_dsp|optional_sofa) or len(right)!=14:
+ errors.append('Unexpected dependency partition')
+if optional_sofa <= dsp_names and not (dsp/'include/cydsp/spatial/Sofa.h').is_file():
+ errors.append('SOFA provenance without its public optional API')
 if errors:raise SystemExit('\n'.join(errors))
-print('PASS public-only CyAudioCore -> CyDSP; no reverse service dependency; 5/14 vendor partition')
+print(f'PASS public-only CyAudioCore -> CyDSP; no reverse service dependency; {len(left)}/{len(right)} vendor partition')
