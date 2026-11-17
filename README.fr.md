@@ -41,7 +41,7 @@ Les buffers, vues et traitements numériques sont ceux de CyDSP. Les SDK de pér
 
 ## Installation
 
-CyAudioCore demande CMake 3.24+, un compilateur C++20 et CyDSP 0.3.x ou 0.4.x (minimum 0.3.0) ; la dépendance courante est CyDSP 0.4.0. Les headers et archives doivent être reconstruits ensemble pour l’ABI cible. La validation actuelle de Core porte sur Windows x64 ; les autres plateformes et limites matérielles sont précisées dans les [notes de version](VERSION.fr.md).
+CyAudioCore demande CMake 3.24+, un compilateur C++20 et CyDSP 0.3.x ou 0.4.x (minimum 0.3.0) ; la dépendance courante est CyDSP 0.4.5. Les headers et archives doivent être reconstruits ensemble pour l’ABI cible. La validation actuelle de Core porte sur Windows x64 ; les autres plateformes et limites matérielles sont précisées dans les [notes de version](VERSION.fr.md).
 
 Avec les paquets CyAudioCore et CyDSP installés dans le même préfixe, ajoutez ceci au `CMakeLists.txt` de votre application :
 

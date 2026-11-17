@@ -218,6 +218,24 @@ int main() {
         hrtf.fractionalDelayTaps!=17 || bank.prepare(moved.points(),hrtf)!=Status::ok ||
         binaural.prepare({48000,8,1},bank)!=Status::ok || binaural.latencyFrames()==0 ||
         binaural.process(input.block(),stereo.block())!=Status::ok) return 46;
+#if CYDSP_VERSION_MINOR > 4 || CYDSP_VERSION_PATCH >= 5
+    // Link the current HRTF timing/interpolation and renderer symbols after relocation.
+    if (settings.removeCommonDelay || bank.removedCommonDelayFrames()!=0) return 47;
+    settings.removeCommonDelay=true;
+    point.leftDelayFrames=4; point.rightDelayFrames=6;
+    if (bank.prepare({&point,1},settings)!=Status::ok || bank.removedCommonDelayFrames()!=4) return 48;
+    float alignedLeft[2], alignedRight[2];
+    std::array<double,2> delays{};
+    if (bank.interpolate({1,0,0},alignedLeft,alignedRight,delays)!=Status::ok ||
+        delays[0]!=0 || delays[1]!=2 || alignedLeft[0]!=1 || alignedRight[0]!=1) return 49;
+    const cydsp::HrirRenderConfig renderConfig{cydsp::HrirConvolution::fft};
+    if (binaural.prepare({48000,8,1},bank,renderConfig)!=Status::ok ||
+        binaural.configuration().convolution!=cydsp::HrirConvolution::fft ||
+        binaural.process(input.block(),stereo.block())!=Status::ok) return 50;
+    cydsp::NeuralHrtfModel unloadedModel;
+    cydsp::NeuralBinaural<float> neural;
+    if (unloadedModel.info().parameters!=0 || neural.latencyFrames()!=0) return 51;
+#endif
 #endif
     // The CLAP facade/discovery symbols and public headers must survive install/relocation.
     cyaudio::ClapPresetDiscovery discovery;

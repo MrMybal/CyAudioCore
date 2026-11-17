@@ -4,13 +4,13 @@ title: Build and link
 description: Install the static libraries and render your first block.
 section: Guides
 order: 1
-revision: 2
+revision: 3
 parent: overview
 ---
 
 ## Requirements {#requirements}
 
-Use CMake 3.24+, a C++20 compiler and CyDSP 0.3.x or 0.4.x (minimum 0.3.0). The current dependency is 0.4.0. Obtain CyDSP separately. Keep headers, archives, C++ runtime and target architecture consistent across the application and workers. Rebuild consumers when a dependency changes its C++ object layout. The installed Core package requests the exact CyDSP version used to build its static archives.
+Use CMake 3.24+, a C++20 compiler and CyDSP 0.3.x or 0.4.x (minimum 0.3.0). The current dependency is 0.4.5. Obtain CyDSP separately. Keep headers, archives, C++ runtime and target architecture consistent across the application and workers. Rebuild consumers when a dependency changes its C++ object layout. The installed Core package requests the exact CyDSP version used to build its static archives.
 
 ## Build from source {#build}
 
@@ -70,7 +70,13 @@ The source must outlive the transport and its samples must remain immutable. In 
 
 With CyDSP 0.4, prepare HRTF banks, analytic HRIRs and HOA decoders through its public API, then use their `process` calls in your graph callbacks. Preparation belongs on the control thread. Propagate the processor's reported latency and tail to the graph; the spectral HOA design and fractional-delay policies can add latency. Core does not choose a spatial quality profile or apply a renderer automatically.
 
+CyDSP 0.4.5 preserves measured arrival timing by default. Set `HrtfPreparation::removeCommonDelay` explicitly to subtract the earliest acoustic delay across the entire bank. `HrtfSet::removedCommonDelayFrames()` reports this advance at the target sample rate; it is separate from renderer latency and preserves ear/direction differences. `HrirRenderConfig` selects direct, FFT or automatic convolution during preparation, without adding block latency.
+
+The experimental `NeuralBinaural` renderer consumes a separately loaded `NeuralHrtfModel`; no trained model is selected or loaded by Core. Load weights and prepare the renderer outside audio processing, keep the model sample rate consistent and budget design updates, including their bounded history replay.
+
 Decoded HRTF assets/cache and SOFA readers are separate, optional CyDSP targets. For a source build, `CYDSP_BUILD_HRTF_ASSETS=ON` enables `CyDSP::HrtfAssets`; `CYDSP_BUILD_SOFA=ON` also enables `CyDSP::Sofa`. Both are off by default. The compact reader is selected by `CYDSP_SOFA_COMPACT`; the complete reader requires the explicit `CYDSP_SOFA_COMPLETE` option and external HDF5/ZLIB SDKs. Obtain datasets separately and retain their licenses plus the notices distributed with CyDSP.
+
+CyDSP's bundled SADIE II selection is separate from its static archives. `CYDSP_INSTALL_HRTF_DATA=ON` explicitly installs these measurements under Apache-2.0 with their original notices; this option is off by default. The installed CyDSP package then exposes `CyDSP_HRTF_DATA_DIR`. This does not enable a SOFA reader or choose a spatial processor.
 
 For an installed Core built against CyDSP 0.4 with SOFA enabled:
 

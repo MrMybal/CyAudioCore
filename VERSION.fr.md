@@ -6,7 +6,7 @@ CyAudioCore fournit les services audio et s'appuie sur l'API publique de CyDSP p
 
 ## Changements depuis l'import initial
 
-- Compatibilité CyDSP 0.4.0 : composition HRTF avec le transport et le graphe, prise en charge des paquets 0.4 installés et contrôle exact de la version de dépendance statique. Voir l’[intégration courante](docs/CyDSPCurrent.fr.md).
+- Compatibilité CyDSP 0.4.5 : retrait explicite du délai HRTF commun et rendu direct/FFT avec le transport et le graphe ; archives, headers et workers installés de même version. La prise en charge des paquets 0.4 installés et le contrôle exact de la version de dépendance statique sont conservés. Voir l’[intégration courante](docs/CyDSPCurrent.fr.md).
 - Compatibilité avec CyDSP 0.3.2 : reconstruction des archives et contrôle du paquet installé avec sa version exacte ; couverture de la convolution via le transport et le graphe, avec blocs variables et buffers partagés. Voir la [référence courante](docs/CyDSPCurrent.fr.md).
 
 - Les fournisseurs publics de plugins isolent chaque instance et chaque scan ; contrôles CLAP et presets par IPC, mode même cycle sans attente et worker optionnel. Voir [configuration et utilisation](docs/PluginIsolation.fr.md).

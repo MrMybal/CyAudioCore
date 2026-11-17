@@ -104,15 +104,15 @@ Les régressions de composition testent les frontières entre bibliothèques :
 - Audits d'allocation/libération autour des traitements préparés et du reset.
 
 Les tests de composition sont conditionnés à la présence des nouveaux headers.
-Ils signalent explicitement leur absence avec un ancien package 0.2 ; les tests
-existants et les API de production restent utilisables avec celui-ci.
+Le minimum actuel de Core est CyDSP 0.3.0. Les signatures HRTF 0.4 et 0.4.5
+supplémentaires sont testées seulement lorsqu’elles sont disponibles.
 
 Exécutions explicites, sans périphérique physique :
 
 ```sh
-python scripts/run_native.py --portaudio --build-dir build/portaudio-on
-python scripts/run_native.py --build-dir build/portaudio-off
-python scripts/run_native.py --portaudio --sanitize --build-dir build/portaudio-asan
+python scripts/run_native.py --services-only --portaudio --build-dir build/portaudio-on
+python scripts/run_native.py --services-only --build-dir build/portaudio-off
+python scripts/run_native.py --services-only --portaudio --sanitize --build-dir build/portaudio-asan
 python scripts/validate_dsp_package.py --build-dir build/portaudio-on
 python scripts/validate_dsp_package.py --build-dir build/portaudio-off
 python scripts/test_reporting.py

@@ -227,7 +227,8 @@ template <Sample T> void spatialWidth() {
 }
 
 #if CYDSP_VERSION_MAJOR == 0 && CYDSP_VERSION_MINOR >= 4
-template <Sample T> void hrtfTransportGraph() {
+template <Sample T> void hrtfTransportGraph([[maybe_unused]] bool removeCommonDelay = false,
+                                           [[maybe_unused]] bool fft = false) {
     constexpr std::size_t capacity = 17;
     const std::array<T,3> left{{T(1),T(.25),T(-.125)}}, right{{T(.5),T(-.25),T(.125)}};
     const std::array<cydsp::HrirPoint<T>,2> points{{
@@ -235,10 +236,23 @@ template <Sample T> void hrtfTransportGraph() {
     cydsp::HrtfPreparation preparation;
     ok(cydsp::hrtfPreparation(cydsp::HrtfQuality::realtimeHigh,48000,preparation));
     preparation.detectOnsets = false;
+#if CYDSP_VERSION_MINOR > 4 || CYDSP_VERSION_PATCH >= 5
+    require(!preparation.removeCommonDelay, "HRTF measurement timing is preserved by default");
+    preparation.removeCommonDelay = removeCommonDelay;
+#endif
     cydsp::HrtfSet<T> bank; ok(bank.prepare(points,preparation));
     require(bank.storageReport().fractionalDelayTaps == 17 && !bank.truncated(), "explicit 0.4 HRTF preparation policy");
     cydsp::HrirBinaural<T> renderer, reference;
+#if CYDSP_VERSION_MINOR > 4 || CYDSP_VERSION_PATCH >= 5
+    require(bank.removedCommonDelayFrames() == (removeCommonDelay ? .5 : 0.),
+            "explicit common acoustic advance is separate from graph latency");
+    const cydsp::HrirRenderConfig config{fft ? cydsp::HrirConvolution::fft : cydsp::HrirConvolution::direct};
+    ok(renderer.prepare({48000,capacity,1},bank,config));
+    require(renderer.configuration().convolution == config.convolution, "explicit HRIR convolution policy");
+    ok(reference.prepare({48000,capacity,1},bank,{cydsp::HrirConvolution::direct}));
+#else
     ok(renderer.prepare({48000,capacity,1},bank)); ok(reference.prepare({48000,capacity,1},bank));
+#endif
     const std::array<cydsp::DspBus,1> mono{{{7,1}}}, stereo{{{42,2}}};
     const std::array<cydsp::DspNode<T>,1> nodes{{{1,&renderer,
         [](void* ptr,auto in,auto out) noexcept { return static_cast<cydsp::HrirBinaural<T>*>(ptr)->process(in[0],out[0]); },
@@ -363,6 +377,13 @@ void dspCompositionRegression() {
     spatialWidth<float>(); spatialWidth<double>();
 #if CYDSP_VERSION_MAJOR == 0 && CYDSP_VERSION_MINOR >= 4
     hrtfTransportGraph<float>(); hrtfTransportGraph<double>();
+#if CYDSP_VERSION_MINOR > 4 || CYDSP_VERSION_PATCH >= 5
+    for (bool removeCommonDelay : {false,true}) for (bool fft : {false,true}) {
+        if (!removeCommonDelay && !fft) continue; // Already covered by the default calls.
+        hrtfTransportGraph<float>(removeCommonDelay,fft);
+        hrtfTransportGraph<double>(removeCommonDelay,fft);
+    }
+#endif
 #endif
 #if defined(CYAUDIOCORE_TEST_AUDIO_PROVIDER)
     deviceBuses();
