@@ -1,5 +1,6 @@
 #include "cyaudio/core/DspTypes.h"
 #include "cyaudio/io/AudioDeviceManager.h"
+#include "detail/AudioProvider.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -230,11 +231,16 @@ Status AudioDeviceManager::openImpl(const AudioDeviceConfig& config, AudioDevice
     auto& s = *state_;
     if (s.processing)
         return Status::transition_in_progress;
-    if ((!callback&&!extended) || (!config.inputChannels && !config.outputChannels) ||
-        config.inputChannels > 256 || config.outputChannels > 256 || !config.sampleRate ||
-        config.sampleRate > 768000 || !config.periodFrames || config.periodFrames > 1048576 ||
-        !config.maxCallbackFrames || config.maxCallbackFrames > 1048576 ||
-        !options.scanIntervalMs || options.scanIntervalMs > 60000 || !options.retryIntervalMs ||
+    const auto valid = detail::validateAudioConfig(config, callback, extended);
+    if (valid != Status::ok)
+        return valid;
+    const auto backend = s.native.context.backend();
+    if (backend != AudioBackend::automatic && s.native.context.provider() == AudioProvider::miniaudio) {
+        const auto supported = detail::validateMiniaudioConfig(config, backend);
+        if (supported != Status::ok)
+            return supported;
+    }
+    if (!options.scanIntervalMs || options.scanIntervalMs > 60000 || !options.retryIntervalMs ||
         options.retryIntervalMs > 60000)
         return Status::invalid_argument;
     s.processing = true;

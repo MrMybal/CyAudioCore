@@ -55,6 +55,17 @@ template <Sample T> struct Synthesizer<T>::State {
     const Wavetable<T>* wavetable = nullptr;
     SynthVoiceRenderer<T> renderer;
     std::uint64_t serial = 0, stolen = 0;
+    unsigned managerChannel(const Voice& v) const noexcept {
+        if (!v.fromMpe)
+            return 0;
+        const auto& zone = mpe[v.info.group];
+        const auto ch = v.info.channel;
+        if (ch >= 2 && ch <= zone.lowerMembers() + 1)
+            return 1;
+        if (ch <= 15 && ch >= 16 - zone.upperMembers())
+            return 16;
+        return 0;
+    }
     void frequency(Voice& v) noexcept {
         const auto& c = channels[v.info.group * 16 + v.info.channel - 1];
         v.info.frequency =
@@ -172,6 +183,17 @@ template <Sample T> struct Synthesizer<T>::State {
             else if (cc == 10)
                 channel.pan = value < 64 ? (static_cast<double>(value) - 64) / 64
                                          : (static_cast<double>(value) - 64) / 63;
+            else if (cc == 120) {
+                // MPE has already retired notes whose envelopes are releasing.
+                // Stop every matching synth voice and retire the remaining MPE keys.
+                for (auto& v : voices)
+                    if (v.info.active && v.info.group == group &&
+                        (v.info.channel == m.channel() || managerChannel(v) == m.channel()))
+                        stop(v);
+                (void)mpe[group].process(
+                    m, 0, [](void*, MpeChange, const MpeNote&, std::uint32_t) noexcept {}, nullptr);
+                return;
+            }
             else if (cc == 121) {
                 channel.volume = channel.expression = 1;
                 channel.pan = 0;
@@ -377,18 +399,10 @@ template <Sample T> struct Synthesizer<T>::State {
                 for (std::size_t ch = 0; ch < wave.channels(); ++ch)
                     (void)ops.multiply(wave.channel(ch), env.channel(0), wave.channel(ch));
                 double managerVolume = 1, managerPan = 0;
-                if (v.fromMpe) {
-                    const auto& zone = mpe[v.info.group];
-                    const auto ch = v.info.channel;
-                    const auto manager =
-                        zone.lowerMembers() && ch >= 2 && ch <= zone.lowerMembers() + 1     ? 1u
-                        : zone.upperMembers() && ch >= 16 - zone.upperMembers() && ch <= 15 ? 16u
-                                                                                            : 0u;
-                    if (manager) {
-                        const auto& master = channels[v.info.group * 16 + manager - 1];
-                        managerVolume = master.volume * master.expression;
-                        managerPan = master.pan;
-                    }
+                if (const auto manager = managerChannel(v)) {
+                    const auto& master = channels[v.info.group * 16 + manager - 1];
+                    managerVolume = master.volume * master.expression;
+                    managerPan = master.pan;
                 }
                 const auto velocity = v.info.velocity * p.gain * c.volume * c.expression *
                                       managerVolume *

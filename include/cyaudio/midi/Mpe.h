@@ -57,7 +57,8 @@ class MpeInstrument {
     unsigned lower_ = 15, upper_ = 0;
     std::uint64_t serial_ = 0;
     int master(unsigned channel) const noexcept;
-    void expression(unsigned channel, std::uint32_t, MpeCallback, void*) noexcept;
+    void expression(unsigned channel, std::uint32_t, MpeCallback, void*,
+                    bool updateChannelPressure = false) noexcept;
     void release(unsigned channel, bool force, std::uint32_t, MpeCallback, void*) noexcept;
 };
 } // namespace cyaudio

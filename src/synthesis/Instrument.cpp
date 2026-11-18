@@ -8,6 +8,7 @@
 #include <system_error>
 namespace cyaudio {
 namespace {
+constexpr std::size_t maximumCycleSize = 65536;
 bool valid(const InstrumentPreset& p) noexcept {
     if (p.name.size() > 4096 || !p.voices || p.voices > 1024 || p.rootNote > 127 ||
         p.lowerMpeMembers > 15 || p.upperMpeMembers > 15 ||
@@ -23,13 +24,13 @@ bool valid(const InstrumentPreset& p) noexcept {
         return false;
     if (p.source == InstrumentSource::sample && p.samplePath.empty())
         return false;
-    if (p.source == InstrumentSource::wavetable) {
-        if (p.cycle.size() < 16 || p.cycle.size() > 65536 || !isPowerOfTwo(p.cycle.size()))
+    if (p.cycle.size() > maximumCycleSize ||
+        (p.source == InstrumentSource::wavetable &&
+         (p.cycle.size() < 16 || !isPowerOfTwo(p.cycle.size()))))
+        return false;
+    for (auto value : p.cycle)
+        if (!isFinite(value))
             return false;
-        for (auto value : p.cycle)
-            if (!isFinite(value))
-                return false;
-    }
     return true;
 }
 bool boundedJson(std::string_view text) noexcept {
@@ -157,7 +158,7 @@ Status parseInstrumentPreset(std::string_view text, InstrumentPreset& output) no
         s.envelope = {number(parameters, "attack"), number(parameters, "decay"),
                       number(parameters, "sustain"), number(parameters, "release")};
         const auto cycle = object["cycle"];
-        if (!cycle.isArray() || cycle.size() > 65536)
+        if (!cycle.isArray() || cycle.size() > maximumCycleSize)
             return Status::invalid_argument;
         for (std::uint32_t i = 0; i < cycle.size(); ++i) {
             if (!cycle[i].isFloat() && !cycle[i].isInt())
@@ -255,9 +256,15 @@ Status Instrument<T>::prepare(const ProcessSpec& spec, const InstrumentPreset& p
                 return Status::invalid_argument;
             // The frame limit holds as such up to stereo; wider files are bounded by the
             // same amount of memory (frames x channels), not by frames alone.
-            if (info.frames > maximumFrames || info.frames == 0 ||
-                (info.channels > 2 && info.frames / 2 > maximumFrames / info.channels))
+            if (!info.frames || info.frames > maximumFrames)
                 return Status::block_too_large;
+            if (info.channels > 2) {
+                // floor(2 * maximumFrames / channels), without overflowing size_t.
+                const auto limit = 2 * (maximumFrames / info.channels) +
+                                   (2 * (maximumFrames % info.channels)) / info.channels;
+                if (info.frames > limit)
+                    return Status::block_too_large;
+            }
             AudioBuffer<T> audio;
             r = audio.resize(info.channels, std::size_t(info.frames));
             if (r != Status::ok)

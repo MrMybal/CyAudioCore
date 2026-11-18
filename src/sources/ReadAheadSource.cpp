@@ -89,7 +89,11 @@ template <Sample T> struct ReadAheadSource<T>::State {
         wake.fetch_add(1, std::memory_order_release);
         wake.notify_one();
     }
-    std::uint64_t expected = 0;
+    // After a short read the transport can retry at the end of the valid prefix
+    // or skip the silent tail. Both positions continue the same worker stream.
+    std::uint64_t expected = 0, afterUnderrun = 0;
+    std::uint64_t cacheStart = 0; // First frame whose page has not been returned to the worker.
+    std::size_t shortReadFrames = 0;
     std::uint32_t epoch = 0;
     std::atomic<std::uint32_t> misses{0};
     std::size_t held = std::numeric_limits<std::size_t>::max();
@@ -102,16 +106,15 @@ template <Sample T> struct ReadAheadSource<T>::State {
     }
     void releaseHeld() noexcept {
         if (held != std::numeric_limits<std::size_t>::max()) {
+            const auto& page = pages[held];
+            if (page.epoch == epoch)
+                cacheStart = page.first + page.count;
             (void)free.push(held);
             held = std::numeric_limits<std::size_t>::max();
             signal();
         }
     }
     bool request(std::uint64_t frame) noexcept {
-        releaseHeld();
-        std::size_t id;
-        for (std::size_t i = 0; i < pageCount && ready.pop(id); ++i)
-            (void)free.push(id);
         const auto next = epoch + 1;
         if (!requests.push({frame, next})) {
             requested = false;
@@ -119,8 +122,14 @@ template <Sample T> struct ReadAheadSource<T>::State {
             return false;
         }
         epoch = next;
-        expected = frame;
+        expected = afterUnderrun = cacheStart = frame;
         requested = true;
+        releaseHeld();
+        for (std::size_t i = 0; i < pageCount && ready.pop(held); ++i) {
+            if (pages[held].epoch == epoch)
+                break;
+            releaseHeld();
+        }
         signal();
         return true;
     }
@@ -275,6 +284,8 @@ template <Sample T> struct ReadAheadSource<T>::State {
         CacheRequest request;
         std::uint64_t next = 0;
         std::uint32_t generation = 0;
+        constexpr auto noPage = std::numeric_limits<std::size_t>::max();
+        std::size_t index = noPage;
         bool active = false;
         for (;;) {
             // Sampled before the stop flag and the queues: a signal raised afterwards
@@ -290,21 +301,22 @@ template <Sample T> struct ReadAheadSource<T>::State {
                 changed = true;
             }
             if (changed) {
-#if CYAUDIOCORE_SOURCES_STRETCH
                 stretchNext = std::numeric_limits<std::uint64_t>::max();
-#endif
                 failure.store(0, std::memory_order_relaxed);
                 prefetched.store(0, std::memory_order_relaxed);
                 ack.store(generation, std::memory_order_release);
             }
-            std::size_t index;
-            if (!active || next >= info.frames || !free.pop(index)) {
+            if (!active || next >= info.frames || (index == noPage && !free.pop(index))) {
                 wake.wait(seen, std::memory_order_acquire);
                 continue;
             }
             auto& page = pages[index];
             page.epoch = generation;
             page.status = fill(page, next);
+            // A seek may arrive while a codec or stretch provider is running.
+            // Reuse this slot for the new generation before publishing stale audio.
+            if (requests.peek())
+                continue;
             if (page.status != Status::ok) {
                 page.count = 0;
                 failure.store(static_cast<std::uint32_t>(page.status), std::memory_order_release);
@@ -318,6 +330,7 @@ template <Sample T> struct ReadAheadSource<T>::State {
             } else
                 prefetched.fetch_add(static_cast<std::uint32_t>(page.count),
                                      std::memory_order_release);
+            index = noPage;
         }
     }
 };
@@ -612,7 +625,7 @@ Status ReadAheadSource<T>::readAt(std::uint64_t first, AudioBlock<T> out,
         pad();
         return Status::end_of_stream;
     }
-    if (!s.requested || first != s.expected)
+    if (!s.requested || (first != s.expected && first != s.afterUnderrun))
         if (!s.request(first)) {
             ++s.misses;
             pad();
@@ -646,7 +659,7 @@ Status ReadAheadSource<T>::readAt(std::uint64_t first, AudioBlock<T> out,
         if (offset + n == page.count)
             s.releaseHeld();
     }
-    s.expected = first + count;
+    s.expected = s.afterUnderrun = first + count;
     if (count == out.frames())
         return Status::ok;
     pad();
@@ -655,8 +668,26 @@ Status ReadAheadSource<T>::readAt(std::uint64_t first, AudioBlock<T> out,
     const auto error = s.failure.load(std::memory_order_acquire);
     if (error && s.ack.load(std::memory_order_acquire) == s.epoch)
         return static_cast<Status>(error);
+    s.afterUnderrun = first + std::min<std::uint64_t>(out.frames(), s.info.frames - first);
+    s.shortReadFrames = out.frames();
     ++s.misses;
     return Status::would_block;
+}
+template <Sample T>
+void ReadAheadSource<T>::skipUnderrun(std::uint64_t nextFrame) noexcept {
+    if (!state_ || nextFrame >= state_->info.frames)
+        return;
+    auto& s = *state_;
+    if (s.requested && nextFrame == s.expected)
+        return;
+    // Keep enough room for another callback of the current size. If obsolete
+    // pages would fill those slots, the worker can stay a partial block behind.
+    const auto capacity = s.pageFrames * s.pageCount;
+    const auto wanted =
+        std::min<std::uint64_t>({capacity, s.shortReadFrames, s.info.frames - nextFrame});
+    if (!s.requested || nextFrame != s.afterUnderrun || nextFrame < s.cacheStart ||
+        nextFrame - s.cacheStart > capacity - wanted)
+        (void)s.request(nextFrame);
 }
 template <Sample T>
 Status ReadAheadSource<T>::prefill(std::uint64_t first, std::size_t minimum,

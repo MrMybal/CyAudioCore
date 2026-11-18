@@ -63,6 +63,12 @@ template <class T> void run(const std::filesystem::path& directory) {
     event.port = 0;
     event.bytes = sysex;
     ok(events.add(event));
+    const std::array<std::uint8_t, 3> note{0x90, 62, 100};
+    PluginEvent midi;
+    midi.kind = PluginEventKind::midi1;
+    midi.port = 0;
+    midi.bytes = note;
+    ok(events.add(midi));
     PluginProcess<T> call{inputs, outputs, 64, &events, &result};
     PluginWorkerBlockResult observed;
     ok(worker.process(call, observed));
@@ -84,7 +90,18 @@ template <class T> void run(const std::filesystem::path& directory) {
     ok(real.status);
     require(real.result.received && real.result.receivedSequence == 1 &&
             out.block().channel(0)[0] == T{1.25});
-    require(result.size() == 1 && result.event(0)->bytes.size() == 12000);
+    require(result.size() == 2 && result.event(0)->bytes.size() == 12000);
+    // The next reply's SysEx will not fit, but the following note and all audio fit.
+    ok(result.prepare(2, note.size()));
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    ok(worker.process(call, observed));
+    require(observed.received && !observed.missedDeadline && out.block().channel(0)[0] == T{1.25});
+    require(result.size() == 1 && std::ranges::equal(result.event(0)->bytes, note));
+    std::uint32_t flags = 0;
+    ok(worker.poll(flags));
+    require((flags & pluginEventsDropped) != 0);
+    ok(worker.poll(flags));
+    require((flags & pluginEventsDropped) == 0);
     std::vector<std::uint8_t> state;
     ok(worker.saveState(state));
     require(state.size() == 8);

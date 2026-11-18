@@ -25,6 +25,7 @@ class AudioProviderContext {
                         void*, std::unique_ptr<AudioProviderStream>&) noexcept = 0;
 };
 Status validateAudioConfig(const AudioDeviceConfig&, AudioDeviceCallback, AudioDeviceContextCallback) noexcept;
+Status validateMiniaudioConfig(const AudioDeviceConfig&, AudioBackend) noexcept;
 Status createMiniaudioContext(const AudioContextOptions&, std::shared_ptr<AudioProviderContext>&) noexcept;
 Status createPortAudioContext(const AudioContextOptions&, std::shared_ptr<AudioProviderContext>&) noexcept;
 } // namespace cyaudio::detail

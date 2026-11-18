@@ -6,6 +6,7 @@
 #include <choc/memory/choc_Base64.h>
 #include <choc/text/choc_JSON.h>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <random>
 #include <stdexcept>
@@ -23,6 +24,9 @@
 #endif
 namespace cyaudio {
 namespace {
+double wavSampleRate(double sourceRate) noexcept {
+    return std::max(1.0, std::round(sourceRate));
+}
 bool publishCache(const std::filesystem::path& temporary,
                   const std::filesystem::path& cache) noexcept {
 #if defined(_WIN32)
@@ -99,13 +103,20 @@ Status EditingPcmProxy::build(const std::filesystem::path& source,
             info.channels * (o.encoding == AudioEncoding::float64 ? 8u : 4u);
         if (info.frames > o.maximumBytes / bytesPerFrame || info.metadataJson.size() > 4194304)
             return Status::block_too_large;
-        // Decimal strings preserve unsigned file-clock tokens without a signed JSON conversion.
+        // Integral rates keep the original descriptor. For fractional rates store the
+        // exact double bits as an integer, independent of the process's numeric locale.
+        const double headerRate = wavSampleRate(info.sampleRate);
+        const bool fractional = info.sampleRate != headerRate;
         auto descriptor = choc::json::create(
-            "schema", "CyDSP.PcmProxy", "version", 1, "source", sourceId, "sourceBytes",
+            "schema", "CyDSP.PcmProxy", "version", fractional ? 2 : 1, "source", sourceId, "sourceBytes",
             std::to_string(sourceBytes), "sourceStamp", std::to_string(sourceStamp), "frames",
-            std::int64_t(info.frames), "rate", info.sampleRate, "channels",
+            std::int64_t(info.frames), "channels",
             std::int64_t(info.channels), "format", info.formatName, "encoding",
             std::int64_t(info.encoding), "metadata", info.metadataJson);
+        if (fractional)
+            descriptor.addMember("rateBits", std::bit_cast<std::int64_t>(info.sampleRate));
+        else
+            descriptor.addMember("rate", static_cast<std::int64_t>(headerRate));
         const auto json = choc::json::toString(descriptor);
         if (json.size() > 6291456)
             return Status::block_too_large;
@@ -114,6 +125,7 @@ Status EditingPcmProxy::build(const std::filesystem::path& source,
             choc::json::create("type", "CyPx", "content", choc::base64::encodeToString(json)));
         AudioFileInfo pcm = info;
         pcm.formatName = "WAV";
+        pcm.sampleRate = headerRate;
         pcm.encoding = o.encoding;
         pcm.metadataJson = choc::json::toString(native);
         std::random_device random;
@@ -229,7 +241,6 @@ Status EditingPcmProxy::open(const std::filesystem::path& source,
                 break;
             }
         if (!descriptor.isObject() || text(descriptor["schema"]) != "CyDSP.PcmProxy" ||
-            number(descriptor["version"]) != 1 ||
             text(descriptor["source"]) != sourceIdentity(source) ||
             text(descriptor["sourceBytes"]) != std::to_string(std::filesystem::file_size(source)) ||
             text(descriptor["sourceStamp"]) != std::to_string(stamp(source)))
@@ -237,7 +248,17 @@ Status EditingPcmProxy::open(const std::filesystem::path& source,
         auto& info = next->source;
         info.frames = number(descriptor["frames"]);
         info.channels = std::size_t(number(descriptor["channels"]));
-        info.sampleRate = descriptor["rate"].get<double>();
+        const auto version = number(descriptor["version"]);
+        if (version == 1) {
+            const auto rate = descriptor["rate"];
+            if (!rate.isFloat() && !rate.isInt())
+                return Status::invalid_argument;
+            info.sampleRate = rate.get<double>();
+        } else if (version == 2) {
+            info.sampleRate = std::bit_cast<double>(number(descriptor["rateBits"]));
+        } else {
+            return Status::invalid_argument;
+        }
         info.formatName = text(descriptor["format"]);
         auto encoding = number(descriptor["encoding"]);
         if (encoding > unsigned(AudioEncoding::float64))
@@ -245,7 +266,8 @@ Status EditingPcmProxy::open(const std::filesystem::path& source,
         info.encoding = AudioEncoding(encoding);
         info.metadataJson = text(descriptor["metadata"]);
         if (info.frames != pcm.frames || info.channels != pcm.channels ||
-            info.sampleRate != pcm.sampleRate)
+            !isFinite(info.sampleRate) || info.sampleRate <= 0 || info.sampleRate > 1e9 ||
+            wavSampleRate(info.sampleRate) != pcm.sampleRate)
             return Status::invalid_argument;
         state_.swap(next);
         return Status::ok;

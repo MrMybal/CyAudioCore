@@ -79,6 +79,12 @@ includes the selected duration ratio; extra processor look-ahead is internal.
 prefill is a control-thread operation; readAt retains memory and reports bounded
 underruns. Lifecycle/configuration changes require an idle audio reader.
 
+When the transport advances through an underrun, it calls `AudioSource::skipUnderrun`
+on the audio thread with the next frame, including any loop wrap. Its default
+implementation is empty. `ReadAheadSource` keeps usable pages and repositions its
+worker when the cache window cannot cover the next block. Rebuild applications and
+precompiled source implementations against the updated `AudioSource` virtual interface.
+
 WaveformPeakCache stores per-channel min/max/RMS at power-of-two bucket scales.
 Build/save/load perform I/O on the control/worker owner. Read-only level selection
 and peak views allocate nothing. The original cache format carries source size/
@@ -207,6 +213,11 @@ callbacks anchor MIDI timing to steady_clock with an explicit generation.
 Callback cost/deadline misses are distinct from driver xruns.
 
 EditingPcmProxy constructs an exact decoded disk cache and stamps its source.
+Use `sourceInfo()->sampleRate` for editing and playback timing. A fractional
+source rate is stored exactly in the version 2 descriptor. The WAV header uses
+the nearest positive whole-Hz rate and `pcmInfo()` reports that header value.
+The PCM frames retain their original positions. Whole-Hz sources continue to
+use the version 1 descriptor.
 Float64 is default; float32 is explicit. maximumBytes and
 maximumWorkingBufferBytes bound the cache/copy buffer. Buffer statistics include
 sample alignment and pointer table; metadata/codec workspace/OS caches are separate.

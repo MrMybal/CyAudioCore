@@ -23,6 +23,39 @@ void require(bool v, const std::source_location at = std::source_location::curre
 void ok(Status r, const std::source_location at = std::source_location::current()) {
     require(r == Status::ok, at);
 }
+void eventBufferCopies() {
+    PluginEventBuffer assigned;
+    ok(assigned.prepare(1, 0));
+    const std::array<std::uint8_t, 3> note{0x90, 60, 100};
+    const std::array<std::uint8_t, 4> sysex{0xf0, 0x7d, 42, 0xf7};
+    {
+        PluginEventBuffer original;
+        ok(original.prepare(3, note.size() + sysex.size()));
+        PluginEvent e;
+        e.kind = PluginEventKind::midi1;
+        e.port = 0;
+        e.bytes = note;
+        ok(original.add(e));
+        e.kind = PluginEventKind::sysex;
+        e.bytes = sysex;
+        ok(original.add(e));
+        PluginEventBuffer copied(original);
+        assigned = copied;
+        require(copied.event(0)->bytes.data() != original.event(0)->bytes.data() &&
+                assigned.event(1)->bytes.data() != copied.event(1)->bytes.data());
+        original.reset();
+        ok(original.add(e));
+        require(std::ranges::equal(copied.event(0)->bytes, note));
+    }
+    PluginEventBuffer moved(std::move(assigned));
+    require(assigned.size() == 0 && assigned.event(0) == nullptr);
+    assigned = std::move(moved);
+    require(moved.size() == 0 && moved.event(0) == nullptr);
+    require(assigned.size() == 2 && std::ranges::equal(assigned.event(0)->bytes, note) &&
+            std::ranges::equal(assigned.event(1)->bytes, sysex));
+    ok(assigned.add(PluginEvent{}));
+    require(assigned.add(PluginEvent{}) == Status::update_queue_full);
+}
 template <class T> void audio(PluginInstance& instance) {
     PluginPrepareOptions o;
     o.maximumFrames = 64;
@@ -139,6 +172,7 @@ template <class T> void audio(PluginInstance& instance) {
 void pluginRegression(const std::filesystem::path& directory) {
     using namespace cydsp;
 using namespace cyaudio;
+    eventBufferCopies();
     std::unique_ptr<PluginProvider> provider;
     ok(cyaudio::detail::createInProcessPluginProvider(PluginFormat::clap, provider));
     std::vector<PluginDescriptor> descriptors;

@@ -159,7 +159,49 @@ template <Sample T> void lifetime(CpuBackend backend) {
     processAudited(movedSynth,out.block(),nullptr,&events);
     for (T sample : out.block().channel(0)) require(sample == T(-.5),"reprepared synth binds new-rate oscillator");
 }
+template <Sample T> void allSoundOff() {
+    Synthesizer<T> synth;
+    ok(synth.prepare({48000, 32, 1}, 5));
+    ok(synth.setMpeZones(2, 1));
+    SynthParameters params;
+    params.envelope = {0, 0, 1, 2};
+    ok(synth.setParameters(params));
+    UmpBuffer events;
+    ok(events.prepare(10));
+    const auto add = [&](unsigned group, unsigned frame, ShortMidiMessage message) {
+        ok(events.add(frame, umpMidi1(group, MidiMessageView(message.bytes()))));
+    };
+    constexpr std::array<unsigned, 5> channels{2, 3, 15, 8, 2};
+    for (unsigned i = 0; i < channels.size(); ++i) {
+        const unsigned group = i == 4 ? 1 : 0;
+        add(group, 0, midiNoteOn(channels[i], 69, 127));
+        if (i != 1)
+            add(group, 8, midiNoteOff(channels[i], 69));
+    }
+    AudioBuffer<T> out;
+    ok(out.resize(1, 32));
+    processAudited(synth, out.block(), nullptr, &events);
+    require(synth.activeVoices() == 5 && synth.voice(0).releasing && !synth.voice(1).releasing,
+            "held and releasing voices present before All Sound Off");
+    events.reset();
+    add(0, 0, midiController(1, 120, 0));
+    processAudited(synth, out.block(), nullptr, &events);
+    require(synth.activeVoices() == 3 && !synth.voice(0).active && !synth.voice(1).active &&
+                synth.voice(2).active && synth.voice(3).active && synth.voice(4).active,
+            "lower manager panic respects other zones, channels and groups");
+    events.reset();
+    add(0, 0, midiController(16, 120, 0));
+    add(0, 0, midiController(8, 120, 0));
+    add(1, 16, midiController(2, 120, 0));
+    processAudited(synth, out.block(), nullptr, &events);
+    const auto samples = out.block().channel(0);
+    require(!synth.activeVoices() &&
+                std::any_of(samples.begin(), samples.begin() + 16, [](T v) { return v != 0; }) &&
+                std::all_of(samples.begin() + 16, samples.end(), [](T v) { return v == 0; }),
+            "upper manager, independent channel and member panic silence release at event frame");
+}
 template <Sample T> void run() {
+    allSoundOff<T>();
     for (auto backend : {CpuBackend::scalar,CpuBackend::automatic}) {
         for (std::size_t channels : {1u,2u}) for (bool add : {false,true}) eventsAndPhase<T>(backend,channels,add);
         stealing<T>(backend); lifetime<T>(backend);

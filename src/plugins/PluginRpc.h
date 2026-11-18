@@ -387,17 +387,29 @@ template <class A> void fields(A& a, const Events& v) {
 }
 inline Events encodeEvents(const PluginEventBuffer& events) {
     Events e;
+    std::size_t payloadBytes = 0;
+    for (std::size_t i = 0; i < events.size(); ++i) {
+        const auto size = events.event(i)->bytes.size();
+        if (size > 65536 - payloadBytes)
+            throw Invalid{};
+        payloadBytes += size;
+    }
     e.records.resize(events.size());
-    e.payload.resize(65536);
+    e.payload.resize(payloadBytes);
     std::uint32_t count = 0, bytes = 0;
     if (wire::writeEvents(&events, e.records.data(), e.payload.data(), 65536, 65536, count,
                           bytes) != Status::ok)
         throw Invalid{};
-    e.payload.resize(bytes);
     return e;
 }
 inline Status decodeEvents(const Events& e, PluginEventBuffer& out) {
-    auto r = out.prepare(65536, 65536);
+    if (e.records.size() > 65536 || e.payload.size() > 65536)
+        return Status::invalid_argument;
+    if (e.records.empty()) {
+        out.reset();
+        return e.payload.empty() ? Status::ok : Status::invalid_argument;
+    }
+    auto r = out.prepare(e.records.size(), e.payload.size());
     if (r != Status::ok)
         return r;
     return wire::readEvents(e.records.data(), e.payload.data(), std::uint32_t(e.records.size()),

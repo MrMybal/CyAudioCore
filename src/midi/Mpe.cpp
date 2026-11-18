@@ -85,7 +85,7 @@ const MpeNote* MpeInstrument::note(unsigned ch, unsigned key) const noexcept {
                                                                           : nullptr;
 }
 void MpeInstrument::expression(unsigned channel, std::uint32_t frame, MpeCallback callback,
-                               void* context) noexcept {
+                               void* context, bool updateChannelPressure) noexcept {
     for (unsigned ch = 0; ch < 16; ++ch) {
         const auto masterIndex = master(ch + 1);
         if (ch != channel && masterIndex != static_cast<int>(channel))
@@ -94,7 +94,8 @@ void MpeInstrument::expression(unsigned channel, std::uint32_t frame, MpeCallbac
             for (auto bits = active_[ch][word]; bits; bits &= bits - 1) {
                 auto& n = notes_[ch][word * 64 + static_cast<unsigned>(std::countr_zero(bits))];
                 n.pitchSemitones = channels_[ch].bend * channels_[ch].range;
-                n.pressure = channels_[ch].pressure;
+                if (updateChannelPressure && ch == channel)
+                    n.pressure = channels_[ch].pressure;
                 n.timbre = channels_[ch].timbre;
                 n.masterPressure = 0;
                 if (masterIndex >= 0) {
@@ -214,7 +215,7 @@ Status MpeInstrument::process(MidiMessageView message, std::uint32_t frame, MpeC
         expression(ch, frame, callback, context);
     } else if (status == 0xd0) {
         channel.pressure = static_cast<double>(data[1]) / 127;
-        expression(ch, frame, callback, context);
+        expression(ch, frame, callback, context, true);
     } else if (status == 0xa0) {
         auto& n = notes_[ch][data[1]];
         if (n.active) {
@@ -259,7 +260,7 @@ Status MpeInstrument::process(MidiMessageView message, std::uint32_t frame, MpeC
                 for (auto& held : row)
                     held &= static_cast<std::uint16_t>(~(1u << ch));
             release(ch, false, frame, callback, context);
-            expression(ch, frame, callback, context);
+            expression(ch, frame, callback, context, true);
         }
     }
     return Status::ok;

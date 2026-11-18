@@ -50,6 +50,7 @@ class IsolatedBackend final : public PluginBackend, public ClapExtensions {
     PluginHostCallbacks callbacks;
     ClapHostServices services;
     std::atomic<std::uint32_t> failure{0};
+    DroppedEvents flushDrops;
     bool active = false, processing = false;
     bool clap = false;
     Status describe() noexcept {
@@ -261,7 +262,8 @@ class IsolatedBackend final : public PluginBackend, public ClapExtensions {
             // Public output buffer is already prepared; never resize its capacity.
             return wire::readEvents(reply.records.data(), reply.payload.data(),
                                     std::uint32_t(reply.records.size()),
-                                    std::uint32_t(reply.payload.size()), 65536, 65536, 65536, out);
+                                    std::uint32_t(reply.payload.size()), 65536, 65536, 65536, out,
+                                    &flushDrops);
         } catch (const std::bad_alloc&) {
             return Status::allocation_failed;
         } catch (...) {
@@ -313,7 +315,7 @@ class IsolatedBackend final : public PluginBackend, public ClapExtensions {
             std::uint32_t flags = 0;
             std::vector<Notice> notices;
             s = call(worker, Op::pump, [](Writer&) {}, [&](Reader& r) { r(flags, notices); });
-            requests |= flags;
+            requests |= flags | flushDrops.take();
             if (s == Status::ok)
                 for (const auto& n : notices)
                     deliver(n);

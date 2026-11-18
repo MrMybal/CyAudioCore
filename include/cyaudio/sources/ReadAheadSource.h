@@ -33,6 +33,7 @@ template <Sample T> class ReadAheadSource : public AudioSource<T> {
     AudioSourceInfo info() const noexcept override;
     SourceStretchInfo stretchInfo() const noexcept;
     Status readAt(std::uint64_t, AudioBlock<T>, std::size_t& framesRead) noexcept override;
+    void skipUnderrun(std::uint64_t nextFrame) noexcept override;
     // Control thread only, while readAt is idle. Initiates a seek and waits up to timeoutMs.
     Status prefill(std::uint64_t first, std::size_t minimumFrames = 1024,
                    unsigned timeoutMs = 2000) noexcept;

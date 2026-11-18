@@ -117,6 +117,15 @@ void exchange(PluginProvider& provider, const std::filesystem::path& path, const
     ok(p.activate(o));
     ok(p.start());
     Blocks<T> b;
+    PluginEvent note;
+    note.kind = PluginEventKind::noteOn;
+    note.channel = note.port = 0;
+    note.key = 60;
+    note.value = 1;
+    ok(b.events.add(note));
+    note.key = 62;
+    ok(b.events.add(note));
+    ok(b.reply.prepare(1, 0));
     std::int64_t frame = 0;
     for (const auto n : {1u, 17u, 64u, 127u, 128u}) {
         auto block = b.call(n);
@@ -161,8 +170,15 @@ void exchange(PluginProvider& provider, const std::filesystem::path& path, const
             for (std::size_t ch = 0; ch < out.channels(); ++ch)
                 for (auto s : out.channel(ch).first(n))
                     require(s == T(1.25));
+        require(b.reply.size() == 1 && b.reply.event(0)->key == 60);
         require(p.collect(block, ticket) == Status::invalid_argument);
     }
+    std::uint32_t flags = 0;
+    ok(p.pumpMainThread(flags));
+    require((flags & pluginEventsDropped) != 0);
+    ok(p.pumpMainThread(flags));
+    require((flags & pluginEventsDropped) == 0);
+    b.events.reset();
     // Late replies are deliberately abandoned, then never played in a later cycle.
     const std::array<std::uint8_t, 4> delay{0xf0, 0x7d, 0x44, 0xf7};
     PluginEvent event;
@@ -296,6 +312,25 @@ void controls(const std::filesystem::path& directory, PluginIsolationOptions iso
     std::uint32_t requests = 0;
     ok(p.pumpMainThread(requests));
     require(host.presets == 1 && host.errors == 1);
+    PluginEventBuffer in, out;
+    ok(in.prepare(32, 1024));
+    ok(out.prepare(1, 0));
+    PluginEvent param;
+    param.id = 7;
+    param.value = .25;
+    ok(in.add(param));
+    param.value = .75;
+    ok(in.add(param));
+    ok(p.flush(in, out));
+    require(out.size() == 1 && out.event(0)->value == .25);
+    ok(p.pumpMainThread(requests));
+    require((requests & pluginEventsDropped) != 0);
+    in.reset();
+    ok(p.flush(in, out));
+    require(out.size() == 0);
+    ok(in.add(param));
+    ok(p.flush(in, out));
+    require(out.size() == 1 && out.event(0)->value == .75);
     PluginPrepareOptions spec;
     spec.maximumFrames = 128;
     spec.maximumEvents = 32;
@@ -304,14 +339,9 @@ void controls(const std::filesystem::path& directory, PluginIsolationOptions iso
     ok(ext->voiceInfo(voices));
     require(voices.count == 8);
     ok(p.start());
-    PluginEventBuffer in, out;
-    ok(in.prepare(32, 1024));
     ok(out.prepare(32, 1024));
-    PluginEvent param;
-    param.id = 7;
-    param.value = .75;
-    ok(in.add(param));
     ok(eventually([&] { return p.flushAudio(in, out); }));
+    require(out.size() == 1 && out.event(0)->value == .75);
     AudioBuffer<float> input, output;
     ok(input.resize(2, 128));
     ok(output.resize(2, 128));

@@ -270,15 +270,17 @@ struct CiPropertyClient::State {
         std::uint8_t id = 0;
         const auto result =
             transport->requestProperty(q.peer, type, {header.data(), w.position}, data, now, id);
-        if (result == Status::ok)
-            *where = {static_cast<std::size_t>(&e - entries.data()),
-                      sub,
-                      id,
-                      type,
-                      e.generation,
-                      operation,
-                      true};
-        return result;
+        if (result != Status::ok)
+            return result;
+        if (operation == Operation::set) {
+            ++e.generation;
+            e.fresh = false;
+            if (e.subscribed)
+                e.refresh = true;
+        }
+        *where = {static_cast<std::size_t>(&e - entries.data()), sub, id, type, e.generation,
+                  operation, true};
+        return Status::ok;
     }
     void flush() noexcept {
         for (std::size_t i = 0; ackCount && i < acks.size(); ++i) {
@@ -422,14 +424,7 @@ Status CiPropertyClient::set(const CiPropertyQuery& q, std::span<const std::uint
     if ((q.mediaType.empty() || q.mediaType == "application/json") &&
         validateCiPropertyJson(data) != Status::ok)
         return Status::invalid_argument;
-    ++e->generation;
-    const auto r = s.request(*e, State::Operation::set, data, now, partial);
-    if (r == Status::ok) {
-        e->fresh = false;
-        if (e->subscribed)
-            e->refresh = true;
-    }
-    return r;
+    return s.request(*e, State::Operation::set, data, now, partial);
 }
 Status CiPropertyClient::subscribe(const CiPropertyQuery& q, std::uint64_t now) noexcept {
     if (!state_)

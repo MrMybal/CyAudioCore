@@ -74,6 +74,7 @@ struct PluginWorker::State {
     PluginWorkerOptions options;
     VectorOps ops;
     PluginEventBuffer discardEvents;
+    detail::DroppedEvents droppedEvents;
     std::unique_ptr<std::uint8_t[]> payload; // Private copy of one reply's payload.
     std::thread::id owner = std::this_thread::get_id();
     std::atomic<std::uint32_t> alive{1};
@@ -87,6 +88,16 @@ struct PluginWorker::State {
     bool flushPending = false;
     PluginHostCallbacks callbacks;
     ClapHostServices services;
+    Status readOutputEvents(std::uint32_t count, std::uint32_t bytes, std::uint32_t frames,
+                            PluginEventBuffer* output) noexcept {
+        if (bytes > limits.payload)
+            return Status::invalid_argument;
+        if (bytes)
+            std::memcpy(payload.get(), mapping.data + offsets.outputPayload, bytes);
+        return readEvents(reinterpret_cast<const Event*>(mapping.data + offsets.outputEvents),
+                          payload.get(), count, bytes, limits.events, limits.payload, frames,
+                          output ? *output : discardEvents, &droppedEvents);
+    }
     // Reverse GUI RPCs execute trusted application callbacks only on the UI owner.
     void reverse() noexcept {
         std::uint32_t expected = 1;
@@ -510,15 +521,7 @@ Status PluginWorker::processImpl(const PluginProcess<T>& p,
             for (std::size_t ch = 0; ch < bus.channels(); ++ch)
                 (void)s.ops.copy(std::span<const T>(audio + (channel++) * limit.frames, p.frames),
                                  bus.channel(ch).first(p.frames));
-        // Events are decoded from a private copy of the payload, not from memory the
-        // child can still rewrite.
-        if (replyBytes)
-            std::memcpy(s.payload.get(), s.mapping.data + s.offsets.outputPayload, replyBytes);
-        auto& events = p.outputEvents ? *p.outputEvents : s.discardEvents;
-        received =
-            readEvents(reinterpret_cast<const Event*>(s.mapping.data + s.offsets.outputEvents),
-                       s.payload.get(), replyEvents, replyBytes, limit.events, limit.payload,
-                       p.frames, events);
+        received = s.readOutputEvents(replyEvents, replyBytes, p.frames, p.outputEvents);
         if (received == Status::ok) {
             result.received = true;
             result.receivedSequence = sequence - 1;
@@ -700,12 +703,7 @@ Status PluginWorker::exchange(const PluginProcess<T>& p, std::uint64_t& ticket,
                                  bus.channel(ch).first(p.frames));
                 ++channel;
             }
-        if (bytes)
-            std::memcpy(s.payload.get(), s.mapping.data + s.offsets.outputPayload, bytes);
-        auto& events = p.outputEvents ? *p.outputEvents : s.discardEvents;
-        r = readEvents(reinterpret_cast<const Event*>(s.mapping.data + s.offsets.outputEvents),
-                       s.payload.get(), count, bytes, limit.events, limit.payload, p.frames,
-                       events);
+        r = s.readOutputEvents(count, bytes, p.frames, p.outputEvents);
     }
     s.pending = 0;
     h.audioState.store(0, std::memory_order_release);
@@ -745,7 +743,8 @@ Status PluginWorker::poll(std::uint32_t& requests) noexcept {
     const auto r = state_->health();
     if (r == Status::ok) {
         state_->reverse();
-        requests = state_->header->requests.exchange(0, std::memory_order_acq_rel);
+        requests = state_->header->requests.exchange(0, std::memory_order_acq_rel) |
+                   state_->droppedEvents.take();
         state_->refreshTiming(); // Latency/tail may change while the plugin runs.
     }
     return r;
@@ -1102,13 +1101,8 @@ Status detail::PluginRemoteAccess::flushAudio(PluginWorker& w, const PluginEvent
                             count > limit.events || bytes > limit.payload
                         ? Status::invalid_argument
                         : Status(status);
-    if (result == Status::ok) {
-        if (bytes)
-            std::memcpy(s.payload.get(), s.mapping.data + s.offsets.outputPayload, bytes);
-        result = readEvents(reinterpret_cast<const Event*>(s.mapping.data + s.offsets.outputEvents),
-                            s.payload.get(), count, bytes, limit.events, limit.payload,
-                            s.pendingFrames, out);
-    }
+    if (result == Status::ok)
+        result = s.readOutputEvents(count, bytes, s.pendingFrames, &out);
     s.pending = 0;
     s.flushPending = false;
     h.audioState.store(0, std::memory_order_release);

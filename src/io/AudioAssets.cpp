@@ -340,50 +340,53 @@ Status ImpulseResponse<T>::load(const std::filesystem::path& path,
         if (!file.frames || file.frames > options.maximumFrames || !isFinite(count) || count < 1 ||
             count > double(options.maximumFrames))
             return Status::block_too_large;
-        AudioBuffer<T> source, mapped, padded, result;
-        r = source.resize(file.channels, std::size_t(file.frames));
+        VectorOps ops;
+        r = VectorOps::create(options.backend, ops);
+        if (r != Status::ok)
+            return r;
+        AudioBuffer<T> result;
+        r = result.resize(file.channels, std::size_t(file.frames));
         if (r != Status::ok)
             return r;
         for (std::size_t at = 0; at < file.frames; at += 4096) {
             std::size_t n = 0;
             r = reader.read(at,
-                            source.block().subBlock(
+                            result.block().subBlock(
                                 at, std::min<std::size_t>(4096, std::size_t(file.frames) - at)),
                             n);
             if (r != Status::ok)
                 return r;
         }
-        r = mapped.resize(channels, std::size_t(file.frames));
-        if (r != Status::ok)
-            return r;
-        std::vector<double> coefficients(file.channels * channels);
-        r = defaultChannelMatrix(file.channels, channels, coefficients);
-        if (r != Status::ok)
-            return r;
-        ChannelMatrix<T> matrix;
-        r = matrix.prepare({file.sampleRate, std::size_t(file.frames), file.channels}, channels,
-                           coefficients, options.backend);
-        if (r != Status::ok)
-            return r;
-        r = matrix.process(source.block(), mapped.block());
-        if (r != Status::ok)
-            return r;
-        if (rate == file.sampleRate)
+        if (channels != file.channels) {
+            AudioBuffer<T> mapped;
+            r = mapped.resize(channels, std::size_t(file.frames));
+            if (r != Status::ok)
+                return r;
+            std::vector<double> coefficients(file.channels * channels);
+            r = defaultChannelMatrix(file.channels, channels, coefficients);
+            if (r != Status::ok)
+                return r;
+            ChannelMatrix<T> matrix;
+            r = matrix.prepare({file.sampleRate, std::size_t(file.frames), file.channels}, channels,
+                               coefficients, options.backend);
+            if (r != Status::ok)
+                return r;
+            r = matrix.process(result.block(), mapped.block());
+            if (r != Status::ok)
+                return r;
             result.swap(mapped);
-        else {
+        }
+        if (rate != file.sampleRate) {
+            AudioBuffer<T> padded;
             r = padded.resize(channels, std::size_t(file.frames) + 64);
             if (r != Status::ok)
                 return r;
+            for (std::size_t ch = 0; ch < channels; ++ch)
+                (void)ops.copy(result.block().channel(ch),
+                               padded.block().channel(ch).subspan(31, std::size_t(file.frames)));
             r = result.resize(channels, std::size_t(count));
             if (r != Status::ok)
                 return r;
-            VectorOps ops;
-            r = VectorOps::create(options.backend, ops);
-            if (r != Status::ok)
-                return r;
-            for (std::size_t ch = 0; ch < channels; ++ch)
-                (void)ops.copy(mapped.block().channel(ch),
-                               padded.block().channel(ch).subspan(31, std::size_t(file.frames)));
             const auto block = std::min<std::size_t>(4096, std::size_t(count));
             SincInterpolator<T> convert;
             r = convert.prepare({rate, block, channels}, file.sampleRate, 64, 1024,
@@ -419,10 +422,6 @@ Status ImpulseResponse<T>::load(const std::filesystem::path& path,
             }
         }
         if (options.normalize && peak > 0) {
-            VectorOps ops;
-            r = VectorOps::create(options.backend, ops);
-            if (r != Status::ok)
-                return r;
             for (std::size_t ch = 0; ch < channels; ++ch) {
                 if (peak >= 1 / double(std::numeric_limits<T>::max()))
                     (void)ops.scale(result.block().channel(ch), result.block().channel(ch),

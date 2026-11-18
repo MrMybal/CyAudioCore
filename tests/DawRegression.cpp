@@ -375,7 +375,14 @@ template <Sample T> void transportOutput(CpuBackend backend) {
         std::size_t limit = 16;
         Status status = Status::ok;
         bool invalidCount = false;
+        std::array<std::uint64_t, 2> skippedTo{};
+        unsigned skipped = 0;
         AudioSourceInfo info() const noexcept override { return {48000, 1000, 2}; }
+        void skipUnderrun(std::uint64_t frame) noexcept override {
+            if (skipped < skippedTo.size())
+                skippedTo[skipped] = frame;
+            ++skipped;
+        }
         Status readAt(std::uint64_t first, AudioBlock<T> block,
                       std::size_t& count) noexcept override {
             if (invalidCount) {
@@ -457,7 +464,8 @@ template <Sample T> void transportOutput(CpuBackend backend) {
     render(7);
     samples(std::array{1, 2, 0, 0, 0, 0, 0});
     ok(player.position(position));
-    require(position.frame == 2 && position.underruns == 1, "transport short hold");
+    require(position.frame == 2 && position.underruns == 1 && source.skipped == 0,
+            "transport short hold");
     source.limit = 16;
     source.status = Status::ok;
     render(3);
@@ -481,6 +489,8 @@ template <Sample T> void transportOutput(CpuBackend backend) {
     samples(std::array{4, 5, 0, 0, 0, 4, 5, 0, 0, 0, 4});
     ok(player.position(position));
     require(position.frame == 4 && position.underruns == 2, "transport gaps across loop wraps");
+    require(source.skipped == 2 && source.skippedTo == std::array<std::uint64_t, 2>{3, 3},
+            "source receives actual cursor after each skipped gap wraps");
 
     player.reset();
     ok(player.enqueue({TransportAction::setLoop, 0, 0, false}));

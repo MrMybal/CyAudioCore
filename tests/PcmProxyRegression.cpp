@@ -32,19 +32,51 @@ void ok(Status r, const std::source_location at = std::source_location::current(
         throw std::runtime_error("PCM proxy status " + std::to_string(unsigned(r)) + " line " +
                                  std::to_string(at.line()));
 }
+struct RemoveTestFiles {
+    std::filesystem::path source, cache;
+    ~RemoveTestFiles() {
+        std::error_code ec;
+        std::filesystem::remove(source, ec);
+        std::filesystem::remove(cache, ec);
+    }
+};
+void fractionalRate(double rate, double headerRate) {
+    const auto stem = "cyaudio-fractional-" +
+                      std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
+    const auto folder = cyaudio::testSupport::temporaryDirectory();
+    const auto source = folder / (stem + ".caf"), cache = folder / (stem + ".wav");
+    RemoveTestFiles cleanup{source, cache};
+    AudioFileInfo info;
+    info.channels = 1;
+    info.sampleRate = rate;
+    info.encoding = AudioEncoding::float64;
+    AudioBuffer<double> block;
+    ok(block.resize(1, 5));
+    for (std::size_t i = 0; i < 5; ++i)
+        block.block().channel(0)[i] = double(i) * 0.125;
+    AudioFileWriter writer;
+    ok(writer.open(source, AudioFileFormat::caf, info));
+    ok(writer.write(block.block()));
+    ok(writer.close());
+
+    EditingPcmProxy proxy;
+    ok(proxy.build(source, cache));
+    proxy.close();
+    ok(proxy.open(source, cache));
+    require(proxy.sourceInfo()->sampleRate == rate && proxy.pcmInfo()->sampleRate == headerRate &&
+                proxy.sourceInfo()->frames == 5 && proxy.pcmInfo()->frames == 5,
+            "fractional source rate and integer WAV rate survive reopening");
+    std::size_t read = 0;
+    ok(proxy.read(3, block.block(2), read));
+    require(read == 2 && block.block().channel(0)[0] == 0.375 &&
+                block.block().channel(0)[1] == 0.5, "fractional proxy uses exact frame positions");
+}
 void test() {
     const auto folder = cyaudio::testSupport::temporaryDirectory();
     const auto prefix = "cydsp-proxy-" +
                         std::to_string(std::chrono::steady_clock::now().time_since_epoch().count());
     const auto source = folder / (prefix + ".wav"), cache = folder / (prefix + "-cache.wav");
-    struct Cleanup {
-        std::filesystem::path a, b;
-        ~Cleanup() {
-            std::error_code ec;
-            std::filesystem::remove(a, ec);
-            std::filesystem::remove(b, ec);
-        }
-    } cleanup{source, cache};
+    RemoveTestFiles cleanup{source, cache};
     AudioFileInfo info;
     info.sampleRate = 48000;
     info.channels = 2;
@@ -128,14 +160,7 @@ void nativeProxy() {
         const auto source = cyaudio::testSupport::temporaryDirectory() /
                             (name + (format == AudioFileFormat::m4a ? ".m4a" : ".wma"));
         const auto cache = cyaudio::testSupport::temporaryDirectory() / (name + "-pcm.wav");
-        struct Cleanup {
-            std::filesystem::path source, cache;
-            ~Cleanup() {
-                std::error_code ec;
-                std::filesystem::remove(source, ec);
-                std::filesystem::remove(cache, ec);
-            }
-        } cleanup{source, cache};
+        RemoveTestFiles cleanup{source, cache};
         AudioFileInfo info;
         info.sampleRate = 48000;
         info.channels = 2;
@@ -215,6 +240,10 @@ void nativeProxy() {
 } // namespace
 void pcmProxyRegression() {
     test();
+    fractionalRate(48000.5, 48001);
+    fractionalRate(std::nextafter(48000.5, 0.0), 48000);
+    fractionalRate(44100.125, 44100);
+    fractionalRate(0.25, 1);
 #if defined(_WIN32)
     nativeProxy();
 #endif

@@ -131,6 +131,20 @@ void instruments() {
     ok(parseInstrumentPreset(json, copy));
     require(copy.name == preset.name && copy.cycle == preset.cycle && copy.voices == 8,
             "versioned instrument roundtrip");
+    {
+        InstrumentPreset oscillator, roundtrip;
+        oscillator.cycle.assign(65536, .5);
+        std::string encoded;
+        ok(serializeInstrumentPreset(oscillator, encoded));
+        ok(parseInstrumentPreset(encoded, roundtrip));
+        require(roundtrip.cycle == oscillator.cycle, "largest inactive cycle roundtrips");
+        oscillator.cycle.push_back(.5);
+        require(serializeInstrumentPreset(oscillator, encoded) == Status::invalid_argument,
+                "oversized inactive cycle rejected at serialization");
+        oscillator.cycle = {std::numeric_limits<double>::infinity()};
+        require(serializeInstrumentPreset(oscillator, encoded) == Status::invalid_argument,
+                "inactive cycle cannot serialize non-finite values");
+    }
     auto unknown = json;
     const auto at = unknown.find(R"("version")");
     require(at != std::string::npos, "serialized version");
@@ -246,6 +260,17 @@ void instruments() {
                 Status::block_too_large,
             "sample limit accounts for channels");
     ok(sampler.prepare(spec, sampled, base, CpuBackend::automatic, 512));
+    // 3 frames x 8 channels fit exactly at 12 stereo frames. A limit of 8
+    // exercises the former integer truncation. A very large limit must not wrap.
+    floatWav(base / "short-wide.wav", 8, std::vector<float>(24, .25f));
+    sampled.samplePath = "short-wide.wav";
+    for (std::size_t limit : {8u, 11u})
+        require(sampler.prepare(spec, sampled, base, CpuBackend::automatic, limit) ==
+                    Status::block_too_large,
+                "odd frame count respects multichannel sample budget");
+    ok(sampler.prepare(spec, sampled, base, CpuBackend::automatic, 12));
+    ok(sampler.prepare(spec, sampled, base, CpuBackend::automatic,
+                       std::numeric_limits<std::size_t>::max()));
     // Optional confinement of the preset's path to the host's base directory.
     for (const auto& inside : {std::filesystem::path("tone.wav"),
                                std::filesystem::path("sub") / ".." / "tone.wav"}) {

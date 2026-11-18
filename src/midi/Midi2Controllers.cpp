@@ -26,11 +26,18 @@ UmpPacket umpPerNoteManagement(unsigned g, unsigned c, unsigned n, bool detach,
     return p;
 }
 struct Midi2Controllers::State {
+    struct Channel {
+        Midi2ChannelControllers values;
+        // Wire values for the channel fields derived from bank-zero registered parameters.
+        // The public pitch ranges and integer selectors omit some wire bits.
+        std::array<std::uint32_t, 8> registeredValues{
+            2u << 25, 0x80000000u, 0x80000000u, 0, 0, 0, 0, 48u << 25};
+    };
     struct Parameter {
         std::uint32_t key = 0, value = 0;
         std::uint64_t use = 0; // Order of the last write, for eviction.
     };
-    std::array<Midi2ChannelControllers, 256> channels;
+    std::array<Channel, 256> channels;
     std::vector<Parameter> parameters;
     std::size_t used = 0;
     std::uint64_t uses = 0;
@@ -39,8 +46,8 @@ namespace {
 std::uint32_t key(bool reg, unsigned g, unsigned c, unsigned b, unsigned i) noexcept {
     return (reg ? 0x80000000u : 0) | (g << 24) | ((c - 1) << 16) | (b << 8) | i;
 }
-void defaults(Midi2ChannelControllers& c) noexcept {
-    c = {};
+void resetControlChanges(Midi2ChannelControllers& c) noexcept {
+    c.cc.fill(0);
     c.cc[7] = c.cc[11] = 0xffffffffu;
     c.cc[10] = 0x80000000u;
 }
@@ -64,13 +71,17 @@ Status Midi2Controllers::prepare(std::size_t max) noexcept {
 }
 void Midi2Controllers::reset() noexcept {
     if (state_) {
-        for (auto& c : state_->channels)
-            defaults(c);
+        for (auto& channel : state_->channels) {
+            channel = {};
+            resetControlChanges(channel.values);
+        }
         state_->used = 0;
+        state_->uses = 0;
     }
 }
 const Midi2ChannelControllers* Midi2Controllers::channel(unsigned g, unsigned c) const noexcept {
-    return state_ && g < 16 && c >= 1 && c <= 16 ? &state_->channels[g * 16 + c - 1] : nullptr;
+    return state_ && g < 16 && c >= 1 && c <= 16 ? &state_->channels[g * 16 + c - 1].values
+                                                  : nullptr;
 }
 Status Midi2Controllers::parameter(bool reg, unsigned g, unsigned c, unsigned b, unsigned i,
                                    std::uint32_t& value) const noexcept {
@@ -93,7 +104,8 @@ Status Midi2Controllers::process(const UmpPacket& received, Callback callback, v
     if (!umpAcceptReceived(p) || p.type() != 4)
         return Status::invalid_argument;
     auto& s = *state_;
-    auto& c = s.channels[p.group() * 16 + p.channel() - 1];
+    auto& channel = s.channels[p.group() * 16 + p.channel() - 1];
+    auto& c = channel.values;
     const auto st = p.status(), index = (p.words[0] >> 8) & 127;
     auto value = p.words[1];
     if (st == 11) {
@@ -101,19 +113,8 @@ Status Midi2Controllers::process(const UmpPacket& received, Callback callback, v
         if (index == 0 || index == 32 || index == 6 || index == 38 || (index >= 98 && index <= 101))
             return Status::ok;
         c.cc[index] = value;
-        if (index == 121) {
-            const auto range = c.pitchRange, pn = c.perNotePitchRange, fine = c.fineTuning,
-                       coarse = c.coarseTuning;
-            const auto program = c.program, msb = c.bankMsb, lsb = c.bankLsb;
-            defaults(c);
-            c.pitchRange = range;
-            c.perNotePitchRange = pn;
-            c.fineTuning = fine;
-            c.coarseTuning = coarse;
-            c.program = program;
-            c.bankMsb = msb;
-            c.bankLsb = lsb;
-        }
+        if (index == 121)
+            resetControlChanges(c);
     } else if (st >= 2 && st <= 5) {
         const bool reg = st == 2 || st == 4;
         const auto bank = (p.words[0] >> 8) & 127, idx = p.words[0] & 127;
@@ -132,16 +133,13 @@ Status Midi2Controllers::process(const UmpPacket& received, Callback callback, v
                 if (s.parameters[i].use < s.parameters[n].use)
                     n = i;
         }
-        auto previous = known ? s.parameters[n].value : 0u;
-        if (!known && reg && bank == 0) {
-            if (idx == 0)
-                previous = 2u << 25;
-            else if (idx == 1 || idx == 2)
-                previous = 0x80000000u;
-            else if (idx == 7)
-                previous = 48u << 25;
-        }
+        const bool channelParameter =
+            reg && bank == 0 && idx < channel.registeredValues.size() && idx != 5 &&
+            (idx != 6 || p.channel() == 1 || p.channel() == 16);
         if (st >= 4) {
+            auto previous = known ? s.parameters[n].value : 0u;
+            if (channelParameter)
+                previous = channel.registeredValues[idx];
             const auto delta =
                 value < 0x80000000u ? std::int64_t(value) : std::int64_t(value) - 4294967296LL;
             value = std::uint32_t(
@@ -150,7 +148,8 @@ Status Midi2Controllers::process(const UmpPacket& received, Callback callback, v
         s.parameters[n] = {k, value, ++s.uses};
         if (n == s.used)
             ++s.used;
-        if (reg && bank == 0) {
+        if (channelParameter) {
+            channel.registeredValues[idx] = value;
             if (idx == 0)
                 c.pitchRange = double(value >> 25) + double((value >> 18) & 127) / 100;
             else if (idx == 1)
@@ -161,7 +160,7 @@ Status Midi2Controllers::process(const UmpPacket& received, Callback callback, v
                 c.tuningProgram = value >> 25;
             else if (idx == 4)
                 c.tuningBank = value >> 25;
-            else if (idx == 6 && (p.channel() == 1 || p.channel() == 16))
+            else if (idx == 6)
                 c.mpeMembers = std::min(15u, value >> 25);
             else if (idx == 7)
                 c.perNotePitchRange = double(value) / 33554432.0;

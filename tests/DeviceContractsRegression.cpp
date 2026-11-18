@@ -62,6 +62,28 @@ void negotiated() {
     AudioDeviceCapabilities capabilities;ok(manager.capabilities("fake",false,capabilities));
     require(capabilities.nativeFormatsKnown&&capabilities.nativeFormats[0].sampleRate==44100&&
         !capabilities.channelNamesKnown&&!capabilities.bufferRangeKnown,"no fabricated capabilities");
+    const auto generation = manager.generation();
+    const auto reject = [&](const AudioDeviceConfig& invalid) {
+        const auto status = manager.open(invalid, [](void*, auto, auto, std::uint64_t) noexcept {
+            return Status::ok;
+        }, nullptr);
+        require(status == Status::invalid_argument && manager.running() &&
+                    manager.generation() == generation && manager.lastError() == Status::ok,
+                "invalid configuration preserves the active stream");
+    };
+    auto invalid = request;
+    invalid.activeOutputChannels = {0, 0};
+    reject(invalid);
+    invalid.activeOutputChannels = {0, 1};
+    invalid.outputChannelMap = {1, 2};
+    reject(invalid);
+    invalid = request;
+    invalid.access = static_cast<AudioAccess>(99);
+    reject(invalid);
+    ok(manager.poll(2000));
+    observed.valid = false;
+    ok(fake.cb(fake.user, {nullptr, 0, 32}, out.block(), 32));
+    require(observed.valid, "rejected configuration preserves the original callback and generation");
     manager.close();
 }
 void nullTiming() {
@@ -87,6 +109,19 @@ void nullTiming() {
         !d.deviceXrunsKnown,"callback diagnostics");
     config.access=AudioAccess::exclusive;
     require(device.openWithContext(context,config,[](void*,auto,auto,const auto&)noexcept{return Status::ok;},nullptr)==Status::unsupported_backend,"exclusive never silently shared");
+    device.close();
+    AudioDeviceManager manager;
+    ok(manager.prepare(true));
+    AudioDeviceConfig selected;
+    const auto callback = [](void*, AudioBlock<const float>, AudioBlock<float>, std::uint64_t) noexcept {
+        return Status::ok;
+    };
+    ok(manager.open(selected, callback, nullptr));
+    const auto generation = manager.generation();
+    selected.outputChannelMap = {1, 999};
+    require(manager.open(selected, callback, nullptr) == Status::invalid_argument &&
+                manager.running() && manager.generation() == generation,
+            "invalid native speaker position preserves the current stream");
 }
 }
 void deviceContractsRegression(){selectors();negotiated();nullTiming();std::cout<<"PASS integration device identity/capabilities/negotiation/timing\n";}

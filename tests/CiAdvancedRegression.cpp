@@ -283,6 +283,11 @@ void service() {
     Session s;
     CiPropertyQuery gain{2, "X-Gain"};
     ok(s.client.fetch(gain, s.now));
+    ok(s.client.set(gain, bytes(R"({"value":1,"name":"a"})"), s.now));
+    s.drain();
+    require(s.x.completed == 2 && s.x.status == 200 && !s.client.cached(gain, s.now, true),
+            "an accepted SET supersedes the outstanding GET");
+    ok(s.client.fetch(gain, s.now));
     s.drain();
     s.expect(gain, R"({"value":1,"name":"a"})");
     require(s.client.cached(gain, s.now)->expiresAtMs == 2010, "cache TTL milliseconds");
@@ -478,7 +483,12 @@ void clientLimits() {
             "pending cache entry cannot be evicted");
     require(s.client.fetch(gain, s.now, true) == Status::transition_in_progress,
             "coalesced GET reports pending");
+    require(s.client.set(gain, bytes("{}"), s.now) == Status::update_queue_full,
+            "a pending GET occupies the only SET slot");
     s.drain();
+    require(s.x.status == 200 && s.client.cached(gain, s.now).has_value(),
+            "a refused SET leaves the in-flight GET eligible to populate the cache");
+    s.expect(gain, R"({"value":1,"name":"a"})");
     ok(s.client.subscribe(gain, s.now));
     s.drain();
     require(s.client.fetch(other, s.now) == Status::update_queue_full,

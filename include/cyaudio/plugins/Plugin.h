@@ -174,6 +174,11 @@ struct PluginEvent {
 // add/reset/event are allocation-free; never retains foreign plugin payload pointers.
 class PluginEventBuffer {
   public:
+    PluginEventBuffer() = default;
+    PluginEventBuffer(const PluginEventBuffer&);
+    PluginEventBuffer& operator=(const PluginEventBuffer&);
+    PluginEventBuffer(PluginEventBuffer&&) noexcept;
+    PluginEventBuffer& operator=(PluginEventBuffer&&) noexcept;
     Status prepare(std::size_t maximumEvents = 1024, std::size_t maximumBytes = 65536) noexcept;
     Status add(const PluginEvent&) noexcept;
     void reset() noexcept {
@@ -185,6 +190,7 @@ class PluginEventBuffer {
     [[nodiscard]] const PluginEvent* event(std::size_t index) const noexcept;
 
   private:
+    void swap(PluginEventBuffer&) noexcept;
     std::vector<PluginEvent> events_;
     std::vector<std::uint8_t> bytes_;
     std::size_t count_ = 0, used_ = 0;

@@ -250,14 +250,20 @@ Status dispatchRemote(Reader& r, Writer& w, Op op, PluginInstance& plugin,
             Events in;
             r(in);
             r.done();
-            PluginEventBuffer input, output;
+            PluginEventBuffer input;
             auto s = decodeEvents(in, input);
-            if (s == Status::ok)
+            if (s != Status::ok)
+                return s;
+            if (!host.flushOutput) {
+                PluginEventBuffer output;
                 s = output.prepare(65536, 65536);
+                if (s != Status::ok)
+                    return s;
+                host.flushOutput.emplace(std::move(output));
+            }
+            s = plugin.flush(input, *host.flushOutput);
             if (s == Status::ok)
-                s = plugin.flush(input, output);
-            if (s == Status::ok)
-                w(encodeEvents(output));
+                w(encodeEvents(*host.flushOutput));
             return s;
         }
         case Op::save: {

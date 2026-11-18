@@ -253,6 +253,39 @@ void extensions() {
         &audit);
     ok(audit.r);
 }
+void retainedRegisteredParameters() {
+    Midi2Controllers controllers;
+    ok(controllers.prepare(1));
+    // A one-unit increment crosses a semitone/selector boundary only if all wire bits survived.
+    constexpr auto next = 12u << 25;
+    for (unsigned index : {0u, 1u, 2u, 3u, 4u, 6u, 7u}) {
+        ok(controllers.process(umpParameter(true, 15, 16, 0, index, next - 1)));
+        ok(controllers.process(umpParameter(false, 15, 16, 0, 0, 123)));
+        std::uint32_t value = 0;
+        require(controllers.parameter(true, 15, 16, 0, index, value) == Status::would_block,
+                "evicted RPN is absent from the sparse table");
+        ok(controllers.process(umpParameter(true, 15, 16, 0, index, 1, true)));
+        ok(controllers.parameter(true, 15, 16, 0, index, value));
+        require(value == next, "relative RPN uses the retained 32-bit channel value");
+    }
+    const auto* channel = controllers.channel(15, 16);
+    ok(controllers.process(umpController(15, 16, 121, 0)));
+    require(channel->pitchRange == 12 && channel->perNotePitchRange == 12 &&
+                channel->fineTuning == (double(next) - 2147483648.0) / 2147483648.0 &&
+                channel->coarseTuning == -52 && channel->tuningProgram == 12 &&
+                channel->tuningBank == 12 && channel->mpeMembers == 12,
+            "CC121 preserves channel RPN settings");
+    ok(controllers.process(umpParameter(true, 15, 16, 0, 0, 1u << 25, true)));
+    require(channel->pitchRange == 13, "pitch range increment after eviction and CC121");
+    ok(controllers.process(umpParameter(true, 0, 16, 0, 0, 1u << 25, true)));
+    require(controllers.channel(0, 16)->pitchRange == 3 && channel->pitchRange == 13,
+            "relative RPN state is independent for each group and channel");
+    controllers.reset();
+    ok(controllers.process(umpParameter(true, 15, 16, 0, 0, 1u << 25, true)));
+    require(channel->pitchRange == 3 && channel->perNotePitchRange == 48 &&
+                channel->mpeMembers == 0,
+            "full controller reset restores the default raw and decoded values");
+}
 void controllers() {
     Midi2Controllers c;
     ok(c.prepare(2));
@@ -643,6 +676,7 @@ void devices() {
 void dawMidiRegression() {
     clocks();
     extensions();
+    retainedRegisteredParameters();
     controllers();
 #if defined(CYAUDIOCORE_TEST_IO)
     devices();

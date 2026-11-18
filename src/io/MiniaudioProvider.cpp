@@ -248,32 +248,26 @@ Status MiniaudioStream::open(MiniaudioContext& context,const AudioDeviceConfig& 
 Status MiniaudioStream::openWithContext(MiniaudioContext& context,const AudioDeviceConfig& c,AudioDeviceContextCallback cb,void* user)noexcept {
     return openImpl(context,c,nullptr,cb,user);
 }
+Status validateMiniaudioConfig(const AudioDeviceConfig& c, AudioBackend backend) noexcept {
+    if (c.access == AudioAccess::exclusive && backend != AudioBackend::wasapi &&
+        backend != AudioBackend::alsa)
+        return Status::unsupported_backend;
+    const auto validPosition = [](unsigned position) { return position <= MA_CHANNEL_AUX_31; };
+    if (!std::all_of(c.inputChannelMap.begin(), c.inputChannelMap.end(), validPosition) ||
+        !std::all_of(c.outputChannelMap.begin(), c.outputChannelMap.end(), validPosition))
+        return Status::invalid_argument;
+    return Status::ok;
+}
 Status MiniaudioStream::openImpl(MiniaudioContext& context, const AudioDeviceConfig& c,
                          AudioDeviceCallback callback,AudioDeviceContextCallback extended, void* user) noexcept {
     if (!context.state_)
         return Status::not_prepared;
-    if ((!callback&&!extended) || (!c.inputChannels && !c.outputChannels) || c.inputChannels > 256 ||
-        c.outputChannels > 256 || !c.sampleRate || c.sampleRate > 768000 || !c.periodFrames ||
-        c.periodFrames > 1048576 || !c.maxCallbackFrames || c.maxCallbackFrames > 1048576)
-        return Status::invalid_argument;
-    if(unsigned(c.access)>unsigned(AudioAccess::exclusive))return Status::invalid_argument;
-    if(c.access==AudioAccess::exclusive&&context.backend()!=AudioBackend::wasapi&&context.backend()!=AudioBackend::alsa)
-        return Status::unsupported_backend;
-    if((!c.inputChannelMap.empty()&&c.inputChannelMap.size()!=c.inputChannels)||
-       (!c.outputChannelMap.empty()&&c.outputChannelMap.size()!=c.outputChannels))return Status::invalid_argument;
-    auto activeValid=[](const auto& channels,std::size_t count,bool output) {
-        if(!channels.empty()&&channels.size()!=count)return false;
-        for(std::size_t i=0;i<channels.size();++i) {
-            if(channels[i]>=256)return false;
-            if(output)for(std::size_t j=0;j<i;++j)if(channels[j]==channels[i])return false;
-        }
-        return true;
-    };
-    if(!activeValid(c.activeInputChannels,c.inputChannels,false)||!activeValid(c.activeOutputChannels,c.outputChannels,true)||
-       (!c.activeInputChannels.empty()&&!c.inputChannelMap.empty())||(!c.activeOutputChannels.empty()&&!c.outputChannelMap.empty()))
-        return Status::invalid_argument;
-    for(auto v:c.inputChannelMap)if(v>MA_CHANNEL_AUX_31)return Status::invalid_argument;
-    for(auto v:c.outputChannelMap)if(v>MA_CHANNEL_AUX_31)return Status::invalid_argument;
+    const auto valid = validateAudioConfig(c, callback, extended);
+    if (valid != Status::ok)
+        return valid;
+    const auto supported = validateMiniaudioConfig(c, context.backend());
+    if (supported != Status::ok)
+        return supported;
     try {
         auto next = std::make_unique<State>();
         next->context = context.state_;

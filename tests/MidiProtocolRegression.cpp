@@ -41,6 +41,17 @@ void midi() {
     ok(buffer.add(20, b.bytes()));
     require(buffer.event(0).frame == 10 && buffer.event(1).bytes[0] == 0x90,
             "MIDI stable sample ordering");
+    UmpBuffer ump;
+    ok(ump.prepare(3));
+    const auto first = umpNote(true, 0, 1, 60, 64000), second = umpNote(true, 0, 1, 62, 64000);
+    ok(ump.add(10, first));
+    ok(ump.add(20, second));
+    ok(ump.add(0, ump.events()[1].packet));
+    const auto events = ump.events();
+    require(events.size() == 3 && events[0].frame == 0 && events[0].packet.words == second.words &&
+                events[1].frame == 10 && events[1].packet.words == first.words &&
+                events[2].frame == 20 && events[2].packet.words == second.words,
+            "reinserting a borrowed UMP packet survives shifting its original slot");
     MidiStreamParser parser;
     ok(parser.prepare(8));
     std::vector<std::vector<std::uint8_t>> result;
@@ -312,6 +323,24 @@ void mpeZones() {
     send(midiPitchBend(2, 8192));
     require(log.count == 3 && log.key[0] == 20 && log.key[1] == 60 && log.key[2] == 100,
             "channel expression reaches each sounding note once, in key order");
+    send({{0xa1, 60, 100}, 3}); // Poly pressure for one key on channel 2.
+    send(midiPitchBend(2, 12345));
+    send(midiController(2, 74, 32));
+    send({{0xd0, 90}, 2}); // Manager pressure is independent of the member note.
+    require(instrument.note(2, 60)->pressure == 100.0 / 127 &&
+                instrument.note(2, 60)->masterPressure == 90.0 / 127 &&
+                instrument.note(2, 100)->pressure == 0,
+            "pitch, timbre and manager pressure preserve poly pressure");
+    send(midiController(1, 121, 0));
+    require(instrument.note(2, 60)->pressure == 100.0 / 127 &&
+                instrument.note(2, 60)->masterPressure == 0,
+            "manager reset leaves the member pressure intact");
+    send({{0xd1, 50}, 2});
+    require(instrument.note(2, 60)->pressure == 50.0 / 127 &&
+                instrument.note(2, 100)->pressure == 50.0 / 127,
+            "member channel pressure updates every sounding key on that channel");
+    send(midiController(2, 121, 0));
+    require(instrument.note(2, 60)->pressure == 0, "member reset clears member pressure");
     send(midiController(1, 64, 127));
     send(midiNoteOff(2, 60));
     send(midiNoteOff(2, 100));

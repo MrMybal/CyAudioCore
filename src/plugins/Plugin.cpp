@@ -20,6 +20,37 @@ bool validPluginTransport(const PluginTransport& t) noexcept {
            (!t.hasSignature || (t.numerator && t.denominator));
 }
 } // namespace detail
+PluginEventBuffer::PluginEventBuffer(const PluginEventBuffer& other)
+    : events_(other.events_.size()), bytes_(other.bytes_.size()), count_(other.count_),
+      used_(other.used_) {
+    std::copy_n(other.bytes_.begin(), used_, bytes_.begin());
+    for (std::size_t i = 0; i < count_; ++i) {
+        auto& event = events_[i];
+        event = other.events_[i];
+        if (!event.bytes.empty())
+            event.bytes = {bytes_.data() + (event.bytes.data() - other.bytes_.data()),
+                           event.bytes.size()};
+    }
+}
+void PluginEventBuffer::swap(PluginEventBuffer& other) noexcept {
+    events_.swap(other.events_);
+    bytes_.swap(other.bytes_);
+    std::swap(count_, other.count_);
+    std::swap(used_, other.used_);
+}
+PluginEventBuffer& PluginEventBuffer::operator=(const PluginEventBuffer& other) {
+    if (this != &other)
+        PluginEventBuffer(other).swap(*this);
+    return *this;
+}
+PluginEventBuffer::PluginEventBuffer(PluginEventBuffer&& other) noexcept {
+    swap(other);
+}
+PluginEventBuffer& PluginEventBuffer::operator=(PluginEventBuffer&& other) noexcept {
+    if (this != &other)
+        PluginEventBuffer(std::move(other)).swap(*this);
+    return *this;
+}
 Status PluginEventBuffer::prepare(std::size_t events, std::size_t bytes) noexcept {
     if (!events || events > 65536 || bytes > 16 * 1024 * 1024)
         return Status::invalid_spec;
@@ -54,6 +85,7 @@ Status PluginEventBuffer::add(const PluginEvent& e) noexcept {
     if (count_ == events_.size() || e.bytes.size() > bytes_.size() - used_)
         return Status::update_queue_full;
     auto copy = e;
+    copy.bytes = {};
     if (!e.bytes.empty()) {
         std::memmove(bytes_.data() + used_, e.bytes.data(), e.bytes.size());
         copy.bytes = {bytes_.data() + used_, e.bytes.size()};

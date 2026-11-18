@@ -242,19 +242,23 @@ inline Status writeEvents(const PluginEventBuffer* in, Event* records, std::uint
 inline Status readEvents(const Event* records, const std::uint8_t* payload, std::uint32_t count,
                          std::uint32_t used, std::uint32_t maximumEvents,
                          std::uint32_t maximumBytes, std::uint32_t frames,
-                         PluginEventBuffer& out) noexcept {
+                         PluginEventBuffer& out, DroppedEvents* overflow = nullptr) noexcept {
     out.reset();
     if (count > maximumEvents || used > maximumBytes)
         return Status::invalid_argument;
+    std::uint32_t previousFrame = 0, decodedBytes = 0, dropped = 0;
     for (std::uint32_t i = 0; i < count; ++i) {
         Event e;
         std::memcpy(static_cast<void*>(&e), records + i, sizeof(Event));
-        if (e.kind > std::uint32_t(PluginEventKind::ump) || e.frame >= frames || e.offset > used ||
-            e.size > used - e.offset || e.wordCount > 4 || e.port < -1 || e.port > 32767 ||
+        if (e.kind > std::uint32_t(PluginEventKind::ump) || e.frame >= frames ||
+            e.frame < previousFrame || e.offset > used || e.size > used - e.offset ||
+            e.size > used - decodedBytes || e.wordCount > 4 || e.port < -1 || e.port > 32767 ||
             e.channel < -1 || e.channel > 15 || e.key < -1 || e.key > 127 ||
             e.transport.flags > 511 || e.transport.numerator > 65535 ||
             e.transport.denominator > 65535)
             return Status::invalid_argument;
+        previousFrame = e.frame;
+        decodedBytes += e.size;
         PluginEvent p;
         p.kind = PluginEventKind(e.kind);
         p.frame = e.frame;
@@ -271,9 +275,13 @@ inline Status readEvents(const Event* records, const std::uint8_t* payload, std:
         p.packet.count = std::uint8_t(e.wordCount);
         p.time = decode(e.transport);
         const auto r = out.add(p);
-        if (r != Status::ok)
+        if (r == Status::update_queue_full && overflow)
+            ++dropped;
+        else if (r != Status::ok)
             return r;
     }
+    if (overflow)
+        overflow->add(dropped);
     return Status::ok;
 }
 class Mapping {

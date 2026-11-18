@@ -221,12 +221,13 @@ Status UmpBuffer::add(std::uint32_t frame, const UmpPacket& p) noexcept {
         return Status::invalid_argument;
     if (count_ == events_.size())
         return Status::update_queue_full;
+    const UmpEvent event{frame, p}; // The packet can be borrowed from events().
     auto i = count_;
     while (i && events_[i - 1].frame > frame) {
         events_[i] = events_[i - 1];
         --i;
     }
-    events_[i] = {frame, p};
+    events_[i] = event;
     ++count_;
     return Status::ok;
 }

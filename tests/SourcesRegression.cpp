@@ -105,6 +105,25 @@ template <Sample T> void sources() {
             "cache corruption rejection");
     ImpulseResponse<T> ir;
     ImpulseLoadOptions irOptions;
+    ok(ir.load(fixture.root / "input.wav", irOptions));
+    require(ir.samples().channels() == 2 && ir.samples().frames() == size &&
+                ir.sampleRate() == info.sampleRate, "IR native layout");
+    for (std::size_t ch = 0; ch < 2; ++ch)
+        require(std::equal(ir.samples().channel(ch).begin(), ir.samples().channel(ch).end(),
+                           input.block().channel(ch).begin()), "IR native channel samples");
+    irOptions.backend = static_cast<CpuBackend>(-1);
+    require(ir.load(fixture.root / "input.wav", irOptions) == Status::unsupported_backend &&
+                ir.samples().frames() == size, "IR native layout still validates the backend");
+    irOptions.backend = CpuBackend::automatic;
+    irOptions.sampleRate = 24000;
+    ok(ir.load(fixture.root / "input.wav", irOptions));
+    require(ir.samples().channels() == 2 && ir.samples().frames() == size / 2,
+            "IR resampling with unchanged channels");
+    for (std::size_t ch = 0; ch < 2; ++ch)
+        for (std::size_t i = 128; i < 512; ++i)
+            require(std::abs(double(ir.samples().channel(ch)[i]) - input.block().channel(ch)[2*i]) <
+                        .001, "IR native channels retain their phase and order during resampling");
+    irOptions.sampleRate = 0;
     irOptions.channels = 1;
     ok(ir.load(fixture.root / "input.wav", irOptions));
     require(ir.samples().channels() == 1 && ir.samples().frames() == size,

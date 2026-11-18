@@ -29,6 +29,8 @@ class EditingPcmProxy {
                 std::size_t maximumBlockFrames = 4096) noexcept;
     Status read(std::uint64_t, AudioBlock<float>, std::size_t&) noexcept;
     Status read(std::uint64_t, AudioBlock<double>, std::size_t&) noexcept;
+    // Use sourceInfo() for timing. pcmInfo() describes the WAV cache, whose header
+    // stores the nearest positive whole-Hz rate. Frame indices and samples are preserved.
     [[nodiscard]] const AudioFileInfo* sourceInfo() const noexcept;
     [[nodiscard]] const AudioFileInfo* pcmInfo() const noexcept;
     [[nodiscard]] PcmProxyStatistics statistics() const noexcept;

@@ -202,6 +202,7 @@ Status AudioTransport<T>::process(AudioBlock<T> out, UnderrunPolicy policy) noex
                         s.ops.fill(out.channel(ch).subspan(offset, n - got), T{});
                     s.frame += n - got;
                     offset += n - got;
+                    s.source->skipUnderrun(s.loop && s.frame == s.loopEnd ? s.loopFirst : s.frame);
                 } else
                     break;
             } else {

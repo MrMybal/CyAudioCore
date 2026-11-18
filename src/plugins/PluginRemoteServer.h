@@ -9,6 +9,7 @@ struct RemoteHost {
     ClapHostServices services;
     PluginHostCallbacks callbacks;
     std::vector<rpc::Notice> notices;
+    std::optional<PluginEventBuffer> flushOutput;
     RemoteHost(wire::Header&, rpc::HostSnapshot);
     void push(rpc::Notice) noexcept;
     bool reverse(std::span<const std::uint8_t>, std::vector<std::uint8_t>&) noexcept;

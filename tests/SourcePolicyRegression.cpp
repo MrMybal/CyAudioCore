@@ -1,14 +1,17 @@
 #include "TestPaths.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cyaudio/CyAudioCore.h>
 #include <iostream>
+#include <initializer_list>
 #include <numbers>
 #include <source_location>
 #include <stdexcept>
+#include <thread>
 namespace {
 using namespace cydsp;
 using namespace cyaudio;
@@ -19,8 +22,15 @@ void require(bool v, const std::source_location at = std::source_location::curre
 void ok(Status s, const std::source_location at = std::source_location::current()) {
     require(s == Status::ok, at);
 }
+struct PageGate {
+    std::uint64_t pauseAt;
+    std::atomic<bool> resume{false};
+    std::atomic<std::uint64_t> startedAt{0};
+    std::atomic<unsigned> primes{0};
+};
 template <class T> class FixtureProcessor final : public SourceStretchProcessor<T> {
   public:
+    explicit FixtureProcessor(PageGate* gate) : gate_(gate) {}
     bool primed = false;
     SourceStretchCapabilities capabilities() const noexcept override {
         SourceStretchCapabilities c;
@@ -38,6 +48,8 @@ template <class T> class FixtureProcessor final : public SourceStretchProcessor<
         return 0;
     }
     Status prime(AudioBlock<const T> input, const SourceStretchControl& c) noexcept override {
+        if (gate_)
+            gate_->primes.fetch_add(1, std::memory_order_relaxed);
         primed = c.mapping && input.frames() == 0;
         return primed ? Status::ok : Status::invalid_argument;
     }
@@ -45,19 +57,27 @@ template <class T> class FixtureProcessor final : public SourceStretchProcessor<
                    const SourceStretchControl& c) noexcept override {
         if (!primed || !c.mapping || in.frames() != out.frames())
             return Status::invalid_argument;
+        if (gate_) {
+            gate_->startedAt.store(c.outputFirst, std::memory_order_release);
+            if (c.outputFirst >= gate_->pauseAt)
+                gate_->resume.wait(false, std::memory_order_acquire);
+        }
         for (std::size_t ch = 0; ch < out.channels(); ++ch)
             std::copy(in.channel(ch).begin(), in.channel(ch).end(), out.channel(ch).begin());
         return Status::ok;
     }
+  private:
+    PageGate* gate_;
 };
 class FixtureProvider final : public SourceStretchProvider {
   public:
+    PageGate* gate = nullptr;
     Status create(SourceStretchMode mode,
                   std::unique_ptr<SourceStretchProcessor<float>>& out) noexcept override {
         if (mode != SourceStretchMode::beats && mode != SourceStretchMode::texture)
             return Status::unsupported_format;
         try {
-            out = std::make_unique<FixtureProcessor<float>>();
+            out = std::make_unique<FixtureProcessor<float>>(gate);
             return Status::ok;
         } catch (...) {
             return Status::allocation_failed;
@@ -68,7 +88,7 @@ class FixtureProvider final : public SourceStretchProvider {
         if (mode != SourceStretchMode::beats && mode != SourceStretchMode::texture)
             return Status::unsupported_format;
         try {
-            out = std::make_unique<FixtureProcessor<double>>();
+            out = std::make_unique<FixtureProcessor<double>>(gate);
             return Status::ok;
         } catch (...) {
             return Status::allocation_failed;
@@ -94,6 +114,72 @@ void maps() {
         std::array<SourceTimePoint, 2>{{{0, 0, 0}, {1000000000000ull, 1125000000000., 0}}}));
     ok(map.evaluate(999999999999., p));
     require(std::abs(p.sourceFrame - 1124999999998.875) < .001);
+}
+void recoverUnderrun(const std::filesystem::path& path, std::span<const double> samples,
+                     std::size_t prefix, std::size_t pages,
+                     std::initializer_list<UnderrunPolicy> policies) {
+    PageGate gate{prefix};
+    FixtureProvider provider;
+    provider.gate = &gate;
+    ReadAheadOptions options;
+    options.provider = &provider;
+    options.mode = SourceStretchMode::beats;
+    options.pageFrames = options.controlQuantumFrames = 64;
+    options.pages = pages;
+    ReadAheadSource<double> source;
+    ok(source.prepare(path, options));
+    // Release the worker even when a failed assertion unwinds past this scope.
+    struct Resume {
+        PageGate& gate;
+        void release() {
+            gate.resume.store(true, std::memory_order_release);
+            gate.resume.notify_one();
+        }
+        ~Resume() { release(); }
+    } worker{gate};
+    if (prefix)
+        ok(source.prefill(0, prefix));
+    AudioTransport<double> transport;
+    ok(transport.prepare({48000, 128, 1}, source));
+    ok(transport.enqueue({TransportAction::play}));
+    AudioBuffer<double> out;
+    ok(out.resize(1, 128));
+    const auto block = out.block().channel(0);
+    std::size_t next = 0;
+    for (auto policy : policies) {
+        ok(transport.process(out.block(), policy));
+        const auto valid = next < prefix ? prefix - next : 0;
+        require(std::equal(block.begin(), block.begin() + valid, samples.begin() + next));
+        require(std::all_of(block.begin() + valid, block.end(), [](double v) { return v == 0; }));
+        next += policy == UnderrunPolicy::hold ? valid : block.size();
+    }
+    TransportPosition position;
+    ok(transport.position(position));
+    require(position.underruns == policies.size() && position.frame == next);
+    worker.release();
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    if (pages > 2) {
+        // Starting page five proves the first four pages have been published.
+        while (gate.startedAt.load(std::memory_order_acquire) < 256 &&
+               std::chrono::steady_clock::now() < until)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        require(gate.startedAt.load(std::memory_order_acquire) >= 256);
+        ok(transport.process(out.block(), UnderrunPolicy::hold));
+        require(std::equal(block.begin(), block.end(), samples.begin() + next));
+        require(gate.primes.load() == 1);
+    } else {
+        // Two pages hold just one callback. Keep the clock advancing after the
+        // long stall and require the decoder to catch up on that moving timeline.
+        do {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+            require(next + block.size() <= samples.size());
+            ok(transport.process(out.block(), UnderrunPolicy::silenceAndAdvance));
+            if (std::equal(block.begin(), block.end(), samples.begin() + next))
+                return;
+            next += block.size();
+        } while (std::chrono::steady_clock::now() < until);
+        require(false);
+    }
 }
 void reader() {
     const auto path =
@@ -122,6 +208,11 @@ void reader() {
     ok(writer.open(path, AudioFileFormat::wav, info, {}, 48000));
     ok(writer.write(raw.block()));
     ok(writer.close());
+    const auto hold = UnderrunPolicy::hold, advance = UnderrunPolicy::silenceAndAdvance;
+    for (auto policy : {hold, advance})
+        for (auto prefix : {0u, 64u})
+            recoverUnderrun(path, raw.block().channel(0), prefix, 8, {policy});
+    recoverUnderrun(path, raw.block().channel(0), 64, 2, {advance, advance, hold, advance, hold});
     ReadAheadSource<double> source;
     ReadAheadOptions options;
     options.pageFrames = 512;

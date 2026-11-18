@@ -16,6 +16,10 @@ template <Sample T> class AudioSource {
     // every reported frame without requiring preinitialized samples.
     // Short reads zero-pad and report exact frames.
     virtual Status readAt(std::uint64_t, AudioBlock<T>, std::size_t& framesRead) noexcept = 0;
+    // Audio consumer notification after it advances over a would_block gap.
+    // The next position includes any loop wrap and may equal the end of the source.
+    // A read-ahead source can schedule work here. No allocation, I/O or waiting.
+    virtual void skipUnderrun(std::uint64_t /*nextFrame*/) noexcept {}
 };
 template <Sample T> class MemoryAudioSource : public AudioSource<T> {
   public:
