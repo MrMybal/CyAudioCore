@@ -1,17 +1,29 @@
-# Référence CyDSP courante — 17 novembre 2026
+# Référence CyDSP courante — 18 novembre 2026
 
-Version intégrée et validée : **CyDSP 0.4.5**, révision
-`68a423a5f97338697b97b3af7d59d735c961fc9d`.
+CyAudioCore **0.2.0** utilise **CyDSP 0.4.6**, révision
+`4963fec91ffa4d4a8e60053edafa9070b3ecb6e5`.
 L’empreinte SHA-256 des entrées de compilation figées est
-`1c6e62fa5015dd179436799cea7bd306b007f9c8f641543a69367c1d4a5bd279`.
-La référence précédente était CyDSP 0.4.0, commit
-`c1d9a52fce7ac90515b0e264545903fdad2901b4`.
+`541186f2d5867298d560e4f40dba27d4e185e82e130b29ac2f9c8ff9ea419e0b`.
+La référence précédente était CyDSP 0.4.5, commit
+`68a423a5f97338697b97b3af7d59d735c961fc9d`.
 
-## Intégration
+## Changements entre 0.4.5 et 0.4.6
 
-Les buffers, vues, conversions, `ProcessSpec`, `Status`, `VectorOps`, générateurs,
-enveloppes et stretching utilisés par Core conservent leurs signatures. Aucun
-noyau numérique n’est recopié et aucun flag SIMD global n’est ajouté.
+Les signatures publiques utilisées par Core restent compatibles. Pour les applications
+qui relient leurs processeurs au transport ou au callback de Core, trois changements
+concernent directement les buffers partagés et le rendu par blocs.
+
+- `SourceBatch` lit correctement les grains à vitesse négative.
+- `ModulatedOscillator` détecte le chevauchement des canaux de sortie même en
+  l’absence de modulation et préserve son état pour le bloc suivant.
+- `MultiBusGraph` et `GraphTransition` sélectionnent exactement le signal voulu
+  aux extrémités du fondu, même si l’autre signal contient une valeur non finie.
+
+`MusicalAnalyzer` prépare les poids non nuls des bandes Mel et les cosinus
+utilisés pour calculer les MFCC. Les mesures publiées par CyDSP portent sur
+cet analyseur. [Mesures de CyDSP à la révision intégrée](https://github.com/MrMybal/CyDSP/blob/4963fec91ffa4d4a8e60053edafa9070b3ecb6e5/docs/Measurements.md)
+
+## Intégration HRTF depuis CyDSP 0.4.5
 
 `HrtfPreparation::removeCommonDelay` retire, sur choix explicite, le délai
 acoustique minimal de toute la banque. Le défaut conserve le timing mesuré.
@@ -30,8 +42,8 @@ L’API expérimentale `NeuralHrtfModel`/`NeuralBinaural` demeure dans CyDSP.
 Core ne charge pas de poids et n’active pas de rendu automatiquement. Le modèle
 doit correspondre au taux du rendu. Les mises à jour de design, leur rejeu
 borné d’historique et les traitements groupés restent des choix applicatifs.
-La disposition de types C++ publics évolue : reconstruire les archives,
-applications et workers avec les mêmes headers et la même copie de CyDSP.
+Reconstruire les archives, applications et workers avec les mêmes en-têtes et la
+même copie de CyDSP.
 
 ## Dépendances optionnelles
 
@@ -60,11 +72,11 @@ accepte les branches 0.4 et 0.3. Le checkout explicite
 installé expose `CyAudioCore_CYDSP_VERSION` et demande cette version **exacte**,
 avec `Stretch` lorsque nécessaire. Un target préchargé d’une autre version est
 refusé avec un message demandant de reconstruire les archives et headers
-correspondants, y compris entre 0.4.0 et 0.4.5. Ce contrôle ne remplace pas la
+correspondants, y compris entre 0.4.5 et 0.4.6. Ce contrôle ne remplace pas la
 cohérence des fichiers pour deux états de développement de même numéro.
 
 CyDSP est consulté en lecture seule. La copie figée se trouve sous
-`build/cydsp-update-0.4.5/source`. Ses entrées de compilation correspondent au
+`build/cydsp-update-0.4.6/source`. Ses entrées de compilation correspondent au
 checkout propre du commit indiqué. Compilations et installations écrivent dans
 le build de Core.
 
@@ -89,10 +101,16 @@ retiré explicitement : blocs variables, fin de source, traîne, directions, res
 gardes de sous-blocs et propagation de latence. Le chemin préparé est audité pour
 les allocations et libérations.
 
+Le test de bypass 0.4.6 relie une source stéréo en mémoire à un effet dont la
+sortie contient des NaN et dont la latence déclarée est de deux échantillons.
+En bypass complet, le callback restitue exactement les deux canaux de la source
+avec ce décalage. Le test vérifie chaque échantillon sur deux blocs, y compris
+le silence après la fin de la source, en `float` et en `double`.
+
 Le consommateur installé puis déplacé vérifie les symboles de timing,
 d’interpolation et de rendu HRTF, ainsi que le lien des nouveaux types neuronaux.
-Il contrôle les deux ordres d’import des paquets et le refus d’un target 0.4.0
-préchargé. Ce contrôle de lien ne valide pas l’inférence d’un modèle entraîné.
+Il contrôle les deux ordres d’import des paquets. L’option
+`--incompatible-dsp-prefix` vérifie le rejet d’une autre version déjà chargée.
 
 Les commandes de validation restent explicites :
 
@@ -103,28 +121,25 @@ python scripts/run_native.py --services-only --cydsp-source ../CyDSP
 python scripts/validate_dsp_package.py --build-dir build/native-x64-portaudio --cydsp-source ../CyDSP --require-prepared-optimizations
 ```
 
-Windows x64, MSVC 19.40, builds Release :
+### Résultats avec CyAudioCore 0.2.0 et CyDSP 0.4.6
+
+La campagne du 18 novembre 2026 utilise Windows x64, MSVC 19.40, des
+périphériques virtuels et l’API simulée de PortAudio.
 
 | Contrôle | Résultat |
 | --- | --- |
-| Core avec PortAudio simulé, 28 suites | Réussi |
-| Core + CyDSP instrumentés AddressSanitizer, PortAudio simulé, 28 suites | Réussi |
-| Core sans PortAudio, 27 suites | Réussi |
-| Compilation indépendante des headers publics, trois configurations | Réussi |
-| Paquets 0.4.5 installés puis déplacés, PortAudio ON/OFF | Réussi |
-| Dépendance préchargée identique / refus de 0.4.0 avec Core 0.4.5 | Réussi |
-| Configuration de Core depuis le paquet CyDSP 0.4.5 installé | Réussi |
-| Archives et worker de production reconstruits/installés ; tests/mesures OFF | Réussi |
-| Sources, provenance et frontière publique 7/14 | Réussi |
-| Manuel FR/EN régénéré ; installation identique | Réussi |
+| Régressions Core en Release avec PortAudio | 28 suites réussies sur 28 |
+| Régressions Core avec AddressSanitizer, Core et CyDSP instrumentés, PortAudio activé | 28 suites réussies sur 28 |
+| Régressions Core en Release sans PortAudio | 27 suites réussies sur 27 |
+| Compilation indépendante des en-têtes publics de Core dans les trois configurations | Réussie |
+| Compilation et exécution d’une application avec les paquets installés puis déplacés, avec et sans PortAudio | Réussies |
+| Résolution CMake avec CyDSP préchargé | 0.4.6 accepté, 0.4.5 rejeté |
+| Requête CMake pour Core 0.1 sur l’installation 0.2.0 | Rejetée |
+| Configuration de Core avec le paquet CyDSP 0.4.6 installé | Réussie |
+| Installation des archives statiques de production et du worker, tests et mesures désactivés | Réussie |
+| Vérification des sources, de la provenance des 14 composants de Core et de la séparation avec les 7 composants de CyDSP | Réussie |
+| Export CyDoc français et anglais | Manuels installés identiques à l’export |
 
-Les empreintes des entrées restent stables pendant les campagnes. Le build de
-production et `build/install` utilisent aussi la copie CyDSP 0.4.5.
-
-Aucun périphérique physique n’est ouvert. Les tests indépendants de CyDSP ne sont
-ni construits ni exécutés. Aucun benchmark n’est exécuté et aucun gain global
-pour Core n’est déduit des optimisations spatiales. Les scénarios perceptuels,
-poids neuronaux entraînés, lecteurs SOFA et mesures SADIE II optionnels ne sont
-pas validés par cette campagne. macOS, Linux, Android, x86, Windows ARM64 et SVE
-ne sont pas exécutés pour cette mise à jour. La compatibilité 0.3 conserve ses
-contrôles antérieurs ; elle ne constitue pas une nouvelle exécution ici.
+Les rapports de la campagne et l’empreinte du checkout sont conservés sous
+`build/cydsp-update-0.4.6`. Les suites exécutées sont celles de CyAudioCore.
+Les tests autonomes de CyDSP et les benchmarks sont hors du périmètre de cette campagne.

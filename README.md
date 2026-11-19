@@ -9,7 +9,7 @@
     <td width="400" align="center" valign="middle"><strong>CyAudioCore</strong><br><sub>C++20 audio</sub></td>
     <td width="300" align="right" valign="top">
       <p><sub>Library license</sub><br><a href="LICENSE"><strong>MIT</strong></a></p>
-      <p><sub>Version</sub><br><a href="VERSION.md"><strong>0.1.0</strong></a><br><strong>IN DEVELOPMENT</strong></p>
+      <p><sub>Version</sub><br><a href="VERSION.md"><strong>0.2.0</strong></a><br><strong>IN DEVELOPMENT</strong></p>
     </td>
   </tr>
 </table>
@@ -18,7 +18,7 @@
 
 A C++20 audio library for developers building audio engines, workstations and music applications. It provides devices, files, MIDI, transport, instruments and plugin hosts, with CyDSP supplying numerical processing.
 
-> **IN DEVELOPMENT · 0.1.0**
+> **IN DEVELOPMENT · 0.2.0**
 >
 > Available as source. Read the [changes and known limitations](VERSION.md) before integrating it.
 
@@ -41,7 +41,7 @@ Buffers, views and numerical processors come from CyDSP. Device SDKs, codecs and
 
 ## Installation
 
-CyAudioCore requires CMake 3.24+, a C++20 compiler and CyDSP 0.3.x or 0.4.x (minimum 0.3.0); the current dependency is CyDSP 0.4.5. Rebuild matching headers and archives for the target ABI. Current Core validation covers Windows x64; other platform and hardware limitations are listed in the [version notes](VERSION.md).
+CyAudioCore requires CMake 3.24+, a C++20 compiler and CyDSP 0.3.x or 0.4.x (minimum 0.3.0). The current dependency is CyDSP 0.4.6. Rebuild matching headers and archives for the target ABI. Current Core validation covers Windows x64. See the [version notes](VERSION.md) for platform and hardware coverage.
 
 With CyAudioCore and CyDSP installed in the same prefix, add this to your application's `CMakeLists.txt`:
 
@@ -49,7 +49,7 @@ With CyAudioCore and CyDSP installed in the same prefix, add this to your applic
 cmake_minimum_required(VERSION 3.24)
 project(MyAudioApp LANGUAGES CXX)
 
-find_package(CyAudioCore 0.1 CONFIG REQUIRED)
+find_package(CyAudioCore 0.2 CONFIG REQUIRED)
 add_executable(MyAudioApp main.cpp)
 target_link_libraries(MyAudioApp PRIVATE CyAudioCore::CyAudioCore)
 ```

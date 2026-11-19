@@ -4,13 +4,15 @@ title: Compiler et lier
 description: Installer les bibliothèques statiques et rendre un premier bloc.
 section: Guides
 order: 1
-sourceRevision: 3
+sourceRevision: 4
 parent: overview
 ---
 
 ## Prérequis {#requirements}
 
-Utilisez CMake 3.24+, un compilateur C++20 et CyDSP 0.3.x ou 0.4.x (minimum 0.3.0). La dépendance courante est 0.4.5. Obtenez CyDSP séparément. Gardez des headers, archives, runtimes C++ et architectures cohérents entre application et workers. Recompilez les consommateurs quand une dépendance change la disposition de ses objets C++. Le paquet installé de Core demande la version exacte de CyDSP utilisée pour compiler ses archives statiques.
+Utilisez CMake 3.24+, un compilateur C++20 et CyDSP 0.3.x ou 0.4.x (minimum 0.3.0). La version de référence est CyDSP 0.4.6. Obtenez CyDSP séparément. Recompilez Core, l’application et ses processus hôtes de plugins avec les mêmes en-têtes, archives statiques, runtime C++ et architecture cible. Le paquet installé de Core demande la version exacte de CyDSP utilisée pour compiler ses archives statiques.
+
+Pour migrer depuis CyAudioCore 0.1, demandez la version 0.2 du paquet dans CMake et recompilez les bibliothèques qui implémentent `AudioSource`. Son interface virtuelle inclut désormais `skipUnderrun`, que le transport appelle lorsqu’il avance malgré un manque d’échantillons.
 
 ## Compiler les sources {#build}
 
@@ -33,7 +35,7 @@ Avec les paquets installés dans un préfixe commun, placez ceci à côté de `m
 ```cmake
 cmake_minimum_required(VERSION 3.24)
 project(MyAudioApp LANGUAGES CXX)
-find_package(CyAudioCore 0.1 CONFIG REQUIRED)
+find_package(CyAudioCore 0.2 CONFIG REQUIRED)
 add_executable(MyAudioApp main.cpp)
 target_link_libraries(MyAudioApp PRIVATE CyAudioCore::CyAudioCore)
 ```
@@ -70,7 +72,7 @@ La source doit vivre plus longtemps que le transport et ses échantillons doiven
 
 Avec CyDSP 0.4, préparez les banques HRTF, HRIR analytiques et décodeurs HOA par son API publique, puis utilisez leurs appels `process` dans vos callbacks de graphe. La préparation appartient au thread de contrôle. Transmettez au graphe la latence et la traîne annoncées par le processeur ; la conception HOA spectrale et les politiques de délai fractionnaire peuvent ajouter de la latence. Core ne choisit pas de profil de qualité spatiale et n’applique pas automatiquement de rendu.
 
-CyDSP 0.4.5 conserve les temps d’arrivée mesurés par défaut. Activez explicitement `HrtfPreparation::removeCommonDelay` pour retirer le délai acoustique minimal de toute la banque. `HrtfSet::removedCommonDelayFrames()` indique cette avance au taux cible ; elle est distincte de la latence du rendu et conserve les écarts entre oreilles et directions. `HrirRenderConfig` sélectionne à la préparation une convolution directe, FFT ou automatique, sans ajouter de latence de bloc.
+Depuis CyDSP 0.4.5, la préparation des HRTF conserve les temps d’arrivée mesurés par défaut. Activez explicitement `HrtfPreparation::removeCommonDelay` pour retirer le délai acoustique minimal de toute la banque. `HrtfSet::removedCommonDelayFrames()` indique l’avance en trames à la fréquence d’échantillonnage cible, indépendamment de la latence du rendu. Retirer ce délai commun préserve les écarts de temps entre les oreilles et entre les directions. `HrirRenderConfig` sélectionne à la préparation une convolution directe, FFT ou automatique, sans ajouter de latence de bloc.
 
 Le processeur expérimental `NeuralBinaural` utilise un `NeuralHrtfModel` chargé séparément ; Core ne choisit ni ne charge de modèle entraîné. Chargez les poids et préparez le rendu hors du traitement audio, gardez le taux du modèle cohérent et prévoyez le coût des mises à jour de design, y compris leur rejeu borné de l’historique.
 
@@ -81,7 +83,7 @@ La sélection SADIE II fournie par CyDSP est séparée de ses archives statiques
 Pour un Core installé, compilé contre CyDSP 0.4 avec SOFA activé :
 
 ```cmake
-find_package(CyAudioCore 0.1 CONFIG REQUIRED)
+find_package(CyAudioCore 0.2 CONFIG REQUIRED)
 find_package(CyDSP ${CyAudioCore_CYDSP_VERSION} EXACT CONFIG REQUIRED COMPONENTS Sofa)
 target_link_libraries(MyAudioApp PRIVATE CyAudioCore::CyAudioCore CyDSP::Sofa)
 ```

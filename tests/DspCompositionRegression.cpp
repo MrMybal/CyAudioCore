@@ -3,6 +3,7 @@
 #include <array>
 #include <cmath>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <type_traits>
 
@@ -80,6 +81,32 @@ template <Sample T> void sourcesAndAnalysis() {
     source.fail = false;
     audited([&]() noexcept { bridge.reset(); status = bridge.process({nullptr, 0, 16}, output.block().subBlock(0, 16)); });
     ok(status); require(output.block().channel(0)[0] == T(.25), "reset restarts Core source without freeing");
+
+#if CYDSP_VERSION_MAJOR > 0 || CYDSP_VERSION_MINOR > 4 || (CYDSP_VERSION_MINOR == 4 && CYDSP_VERSION_PATCH >= 6)
+    const std::array<cydsp::DspNode<T>, 2> bypassNodes{{nodes[0], {2, nullptr,
+        [](void*, auto, auto out) noexcept {
+            for (std::size_t ch = 0; ch < out[0].channels(); ++ch)
+                std::fill(out[0].channel(ch).begin(), out[0].channel(ch).end(), std::numeric_limits<T>::quiet_NaN());
+            return Status::ok;
+        }, bus, bus, {2, 0}}}};
+    const std::array<cydsp::DspConnection, 2> bypassRoutes{{{1, 7, 2, 7, 1}, {2, 7, cydsp::graphOutputNode, 7, 1}}};
+    ok(graph.prepare({48000, 16, 2}, {}, bus, bypassNodes, bypassRoutes));
+    ok(bridge.prepare(graph));
+    ok(graph.setBypassed(2, true, 0));
+    bridge.reset();
+    require(bridge.timing().latencyFrames == 2, "bypassed effect retains its declared latency");
+    for (std::size_t first : {0u, 16u}) {
+        auto view = output.block().subBlock(5, 16);
+        audited([&]() noexcept { status = bridge.process({nullptr, 0, 16}, view); });
+        ok(status);
+        for (std::size_t ch = 0; ch < 2; ++ch)
+            for (std::size_t i = 0; i < view.frames(); ++i) {
+                const auto frame = first + i;
+                const T expected = frame >= 2 && frame - 2 < data.block().frames() ? data.block().channel(ch)[frame - 2] : T{};
+                require(view.channel(ch)[i] == expected, "bypass preserves delayed Core source samples through EOF");
+            }
+    }
+#endif
 
     SampleData<T> sample; ok(sample.prepare(data.block(), 48000));
     cydsp::Granulator<T> grains; ok(grains.prepare({48000, 16, 2}, sample, 2));

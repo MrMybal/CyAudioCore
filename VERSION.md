@@ -1,10 +1,17 @@
-# CyAudioCore 0.1.0
+# CyAudioCore 0.2.0
 
 IN DEVELOPMENT. Source only, no binary release.
 
 CyAudioCore provides audio services and uses the public CyDSP API for numerical processing. Existing persistent formats are preserved. See [architecture](docs/Architecture.md) and [validation](docs/Validation.md).
 
-## Changes since the initial import
+## Changes in 0.2.0
+
+- This minor version adds the virtual method `AudioSource::skipUnderrun(nextFrame)`, changing the source ABI. When the transport advances through an underrun, it calls this method so `ReadAheadSource` can refill the cache at the new playback position and resume audio. Existing source implementations can use the default empty method. Rebuild precompiled source implementations and all consumers with the 0.2.0 headers and archives. [Read-ahead and transport contract](docs/DawIntegration.md#background-playback-and-assets)
+- CyDSP 0.4.6 is the current dependency. It fixes reverse grain playback in `SourceBatch` and bypass mixing in `MultiBusGraph`. Rebuild Core and its consumers against the same CyDSP package. [Dependency revision and build instructions](docs/CyDSPCurrent.fr.md)
+- When an isolated plugin fills its MIDI output buffer, the host keeps the audio block and reports dropped events. Rejecting an invalid device configuration keeps the current stream running. Editing PCM proxies preserve the source’s exact sample rate, including fractional rates, when reopened.
+- Impulse response loading reuses the decoded buffer when the channel count already matches. Flushing an inactive plugin sizes the input buffer to the request and reuses the worker’s output buffer across calls.
+
+## Earlier changes
 
 - CyDSP 0.4.5 compatibility: explicit HRTF common-delay removal and direct/FFT rendering through the transport and graph; matching installed archives, headers and workers. Support for installed 0.4 packages and exact static dependency version checks remains in place. See the [current integration](docs/CyDSPCurrent.fr.md).
 - CyDSP 0.3.2 compatibility: rebuilt archives and exact-version installed-package validation; convolution composition through transport and graph callbacks with variable blocks and aliased buffers. See the [current dependency](docs/CyDSPCurrent.fr.md).

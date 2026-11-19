@@ -1,6 +1,6 @@
 {
   "name": "CyAudioCore",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "defaultLocale": "en",
   "locales": [
     { "code": "en", "label": "English" },

@@ -9,7 +9,7 @@
     <td width="400" align="center" valign="middle"><strong>CyAudioCore</strong><br><sub>C++20 audio</sub></td>
     <td width="300" align="right" valign="top">
       <p><sub>Licence de la bibliothèque</sub><br><a href="LICENSE"><strong>MIT</strong></a></p>
-      <p><sub>Version</sub><br><a href="VERSION.fr.md"><strong>0.1.0</strong></a><br><strong>EN DÉVELOPPEMENT</strong></p>
+      <p><sub>Version</sub><br><a href="VERSION.fr.md"><strong>0.2.0</strong></a><br><strong>EN DÉVELOPPEMENT</strong></p>
     </td>
   </tr>
 </table>
@@ -18,7 +18,7 @@
 
 Bibliothèque audio C++20 pour les développeurs de moteurs audio, de stations de travail et d’applications musicales. Elle fournit les périphériques, fichiers, MIDI, transport, instruments et hôtes de plugins, avec CyDSP pour le calcul numérique.
 
-> **EN DÉVELOPPEMENT · 0.1.0**
+> **EN DÉVELOPPEMENT · 0.2.0**
 >
 > Disponible sous forme de sources. Consulter les [changements et limites connus](VERSION.fr.md) avant l’intégration.
 
@@ -41,7 +41,7 @@ Les buffers, vues et traitements numériques sont ceux de CyDSP. Les SDK de pér
 
 ## Installation
 
-CyAudioCore demande CMake 3.24+, un compilateur C++20 et CyDSP 0.3.x ou 0.4.x (minimum 0.3.0) ; la dépendance courante est CyDSP 0.4.5. Les headers et archives doivent être reconstruits ensemble pour l’ABI cible. La validation actuelle de Core porte sur Windows x64 ; les autres plateformes et limites matérielles sont précisées dans les [notes de version](VERSION.fr.md).
+CyAudioCore demande CMake 3.24+, un compilateur C++20 et CyDSP 0.3.x ou 0.4.x (minimum 0.3.0). La dépendance courante est CyDSP 0.4.6. Les en-têtes et les archives doivent être reconstruits ensemble pour l’ABI cible. La validation actuelle de Core porte sur Windows x64. Les plateformes et le matériel couverts sont précisés dans les [notes de version](VERSION.fr.md).
 
 Avec les paquets CyAudioCore et CyDSP installés dans le même préfixe, ajoutez ceci au `CMakeLists.txt` de votre application :
 
@@ -49,7 +49,7 @@ Avec les paquets CyAudioCore et CyDSP installés dans le même préfixe, ajoutez
 cmake_minimum_required(VERSION 3.24)
 project(MyAudioApp LANGUAGES CXX)
 
-find_package(CyAudioCore 0.1 CONFIG REQUIRED)
+find_package(CyAudioCore 0.2 CONFIG REQUIRED)
 add_executable(MyAudioApp main.cpp)
 target_link_libraries(MyAudioApp PRIVATE CyAudioCore::CyAudioCore)
 ```

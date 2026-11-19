@@ -4,12 +4,12 @@ title: CyAudioCore
 description: Choose the services for your audio application.
 section: Guides
 order: 0
-revision: 1
+revision: 2
 ---
 
 ## Build an audio application {#purpose}
 
-CyAudioCore 0.1.0 is a C++20 library for audio engines, workstations and music applications. It supplies audio and MIDI devices, file services, transport, instruments and plugin hosting. CyDSP supplies the numerical processing. Your application owns its GUI, event loop and audio scheduler.
+CyAudioCore 0.2.0 is a C++20 library for audio engines, workstations and music applications. It supplies audio and MIDI devices, file services, transport, instruments and plugin hosting. CyDSP supplies the numerical processing. Your application owns its GUI, event loop and audio scheduler.
 
 ```diagram
 {"type":"flow","title":"Library responsibilities","nodes":[{"id":"app","label":"Application","x":0,"y":0},{"id":"core","label":"CyAudioCore services","x":260,"y":0},{"id":"dsp","label":"CyDSP processing","x":520,"y":0}],"edges":[{"from":"app","to":"core"},{"from":"core","to":"dsp"}]}

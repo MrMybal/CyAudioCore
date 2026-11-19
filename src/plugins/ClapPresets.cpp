@@ -160,7 +160,7 @@ struct ClapPresetDiscovery::State : Budget {
                    "CyAudioCore",
                    "MrMybal CyberAlien",
                    "https://github.com/MrMybal/CyAudioCore",
-                   "0.1.0",
+                   "0.2.0",
                    this,
                    [](const auto* i, const clap_preset_discovery_filetype_t* f) noexcept {
                        auto& s = *static_cast<State*>(i->indexer_data);

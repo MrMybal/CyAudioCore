@@ -417,7 +417,7 @@ inline Status decodeEvents(const Events& e, PluginEventBuffer& out) {
 }
 struct HostSnapshot {
     std::string name = "CyAudioCore", vendor = "MrMybal CyberAlien",
-                url = "https://github.com/MrMybal/CyAudioCore", version = "0.1.0";
+                url = "https://github.com/MrMybal/CyAudioCore", version = "0.2.0";
     std::optional<ClapTrackInfo> track;
     bool threadPool = false, populateMenu = false, performMenu = false, popupMenu = false;
 };

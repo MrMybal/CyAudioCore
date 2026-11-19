@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(CyAudioCore VERSION 0.1.0 LANGUAGES CXX)
+project(CyAudioCore VERSION 0.2.0 LANGUAGES CXX)
 include(GNUInstallDirs)
 include(CMakePackageConfigHelpers)
 option(CYAUDIOCORE_BUILD_TESTS "Build explicit native regression programs" OFF)

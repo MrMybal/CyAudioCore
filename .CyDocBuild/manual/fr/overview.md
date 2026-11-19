@@ -4,12 +4,12 @@ title: CyAudioCore
 description: Choisir les services de votre application audio.
 section: Guides
 order: 0
-sourceRevision: 1
+sourceRevision: 2
 ---
 
 ## Construire une application audio {#purpose}
 
-CyAudioCore 0.1.0 est une bibliothèque C++20 pour les moteurs audio, stations de travail et applications musicales. Elle fournit les périphériques audio et MIDI, fichiers, transport, instruments et hôtes de plugins. CyDSP fournit le calcul numérique. Votre application possède son interface graphique, sa boucle d’événements et son ordonnanceur audio.
+CyAudioCore 0.2.0 est une bibliothèque C++20 pour les moteurs audio, stations de travail et applications musicales. Elle fournit les périphériques audio et MIDI, fichiers, transport, instruments et hôtes de plugins. CyDSP fournit le calcul numérique. Votre application possède son interface graphique, sa boucle d’événements et son ordonnanceur audio.
 
 ```diagram
 {"type":"flow","title":"Responsabilités des bibliothèques","nodes":[{"id":"app","label":"Application","x":0,"y":0},{"id":"core","label":"Services CyAudioCore","x":260,"y":0},{"id":"dsp","label":"Traitements CyDSP","x":520,"y":0}],"edges":[{"from":"app","to":"core"},{"from":"core","to":"dsp"}]}

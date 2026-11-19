@@ -4,13 +4,15 @@ title: Build and link
 description: Install the static libraries and render your first block.
 section: Guides
 order: 1
-revision: 3
+revision: 4
 parent: overview
 ---
 
 ## Requirements {#requirements}
 
-Use CMake 3.24+, a C++20 compiler and CyDSP 0.3.x or 0.4.x (minimum 0.3.0). The current dependency is 0.4.5. Obtain CyDSP separately. Keep headers, archives, C++ runtime and target architecture consistent across the application and workers. Rebuild consumers when a dependency changes its C++ object layout. The installed Core package requests the exact CyDSP version used to build its static archives.
+Use CMake 3.24+, a C++20 compiler and CyDSP 0.3.x or 0.4.x (minimum 0.3.0). The current dependency is CyDSP 0.4.6. Obtain CyDSP separately. Rebuild Core, the application and its plugin workers with matching headers, static archives, C++ runtime and target architecture. The installed Core package requests the exact CyDSP version used to build its static archives.
+
+When upgrading from CyAudioCore 0.1, change the version in your CMake package request to 0.2 and recompile any libraries that implement `AudioSource`. Its virtual interface now includes `skipUnderrun`, which the transport calls when it advances through an underrun.
 
 ## Build from source {#build}
 
@@ -33,7 +35,7 @@ With the packages installed in a common prefix, place this beside `main.cpp`:
 ```cmake
 cmake_minimum_required(VERSION 3.24)
 project(MyAudioApp LANGUAGES CXX)
-find_package(CyAudioCore 0.1 CONFIG REQUIRED)
+find_package(CyAudioCore 0.2 CONFIG REQUIRED)
 add_executable(MyAudioApp main.cpp)
 target_link_libraries(MyAudioApp PRIVATE CyAudioCore::CyAudioCore)
 ```
@@ -70,7 +72,7 @@ The source must outlive the transport and its samples must remain immutable. In 
 
 With CyDSP 0.4, prepare HRTF banks, analytic HRIRs and HOA decoders through its public API, then use their `process` calls in your graph callbacks. Preparation belongs on the control thread. Propagate the processor's reported latency and tail to the graph; the spectral HOA design and fractional-delay policies can add latency. Core does not choose a spatial quality profile or apply a renderer automatically.
 
-CyDSP 0.4.5 preserves measured arrival timing by default. Set `HrtfPreparation::removeCommonDelay` explicitly to subtract the earliest acoustic delay across the entire bank. `HrtfSet::removedCommonDelayFrames()` reports this advance at the target sample rate; it is separate from renderer latency and preserves ear/direction differences. `HrirRenderConfig` selects direct, FFT or automatic convolution during preparation, without adding block latency.
+Since CyDSP 0.4.5, HRTF preparation preserves measured arrival timing by default. Set `HrtfPreparation::removeCommonDelay` explicitly to subtract the earliest acoustic delay across the entire bank. `HrtfSet::removedCommonDelayFrames()` reports the advance in frames at the target sample rate, independently of renderer latency. Removing this common delay preserves timing differences between ears and directions. `HrirRenderConfig` selects direct, FFT or automatic convolution during preparation, without adding block latency.
 
 The experimental `NeuralBinaural` renderer consumes a separately loaded `NeuralHrtfModel`; no trained model is selected or loaded by Core. Load weights and prepare the renderer outside audio processing, keep the model sample rate consistent and budget design updates, including their bounded history replay.
 
@@ -81,7 +83,7 @@ CyDSP's bundled SADIE II selection is separate from its static archives. `CYDSP_
 For an installed Core built against CyDSP 0.4 with SOFA enabled:
 
 ```cmake
-find_package(CyAudioCore 0.1 CONFIG REQUIRED)
+find_package(CyAudioCore 0.2 CONFIG REQUIRED)
 find_package(CyDSP ${CyAudioCore_CYDSP_VERSION} EXACT CONFIG REQUIRED COMPONENTS Sofa)
 target_link_libraries(MyAudioApp PRIVATE CyAudioCore::CyAudioCore CyDSP::Sofa)
 ```

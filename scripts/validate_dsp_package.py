@@ -50,7 +50,7 @@ project(InstalledDspConsumer LANGUAGES CXX)
 if(PRELOAD_CYDSP)
  find_package(CyDSP @DSP_VERSION@ EXACT CONFIG REQUIRED)
 endif()
-find_package(CyAudioCore 0.1 CONFIG REQUIRED COMPONENTS Devices Files Sources Plugins)
+find_package(CyAudioCore 0.2 CONFIG REQUIRED COMPONENTS Devices Files Sources Plugins)
 if(NOT CyAudioCore_CYDSP_VERSION VERSION_EQUAL "@DSP_VERSION@")
  message(FATAL_ERROR "Core did not record the matching static dependency version")
 endif()
@@ -290,7 +290,7 @@ try:
         (negative/'CMakeLists.txt').write_text('''cmake_minimum_required(VERSION 3.24)
 project(IncompatibleDspConsumer LANGUAGES CXX)
 find_package(CyDSP CONFIG REQUIRED PATHS "${OTHER_DSP_PREFIX}" NO_DEFAULT_PATH)
-find_package(CyAudioCore 0.1 CONFIG REQUIRED PATHS "${CORE_PREFIX}" NO_DEFAULT_PATH)
+find_package(CyAudioCore 0.2 CONFIG REQUIRED PATHS "${CORE_PREFIX}" NO_DEFAULT_PATH)
 ''', encoding='utf-8', newline='\n')
         rejected = subprocess.run([a.cmake, '-S', str(negative), '-B', str(folder/'incompatible-build'),
             '-G', 'Visual Studio 17 2022', '-A', 'x64', '-DOTHER_DSP_PREFIX='+str(incompatible),

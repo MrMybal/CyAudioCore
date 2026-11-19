@@ -146,7 +146,7 @@ struct ClapCapabilities {
 struct ClapHostServices {
     void* context = nullptr;
     std::string name = "CyAudioCore", vendor = "MrMybal CyberAlien",
-                url = "https://github.com/MrMybal/CyAudioCore", version = "0.1.0";
+                url = "https://github.com/MrMybal/CyAudioCore", version = "0.2.0";
     std::optional<ClapTrackInfo> track;
     // Logs are copied into bounded storage and delivered only by pumpMainThread.
     void (*log)(void*, std::int32_t severity, std::string_view message) noexcept = nullptr;
